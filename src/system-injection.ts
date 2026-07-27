@@ -1,151 +1,203 @@
 // src/system-injection.ts
-// Builds the Drosophila-genetics voice injection added to pi's system prompt.
+// Builds the system prompt injection for the active domain.
+// Domain-agnostic: only emits rules defined in the domain YAML.
+// If the domain has no species, no species rules are emitted.
+// If the domain has no balancers, no balancer rules are emitted.
 
 import type { Lexicon } from "./anti-ai-lexicon.ts";
+import type { DomainProfile } from "./domains.ts";
 
-export function buildSystemInjection(lex: Lexicon): string {
-  const species = lex.domain.speciesFirstMention.slice(0, 2).join(" or ");
-  const stages = lex.domain.lifeStages.slice(0, 5).join(", ");
-  const balancers = lex.domain.balancers.slice(0, 5).join(", ");
+export function buildSystemInjection(lex: Lexicon, domain: DomainProfile | null): string {
+  const parts: string[] = [];
 
-  // Voice rule: soft "can_use: limited" allows "Here, we..." but not "We believe..."
-  const voiceIntro =
-    lex.voice.introduction.canUse === true
-      ? "free first person allowed in Introductions"
-      : lex.voice.introduction.canUse === "limited"
-      ? `preferred pattern: "${lex.voice.introduction.preferredPattern ?? "Here, we ..."}"; avoid: ${(lex.voice.introduction.avoidPatterns ?? []).join(", ") || "We believe, We think"}`
-      : "no first person in Introductions";
+  // === 1. Common rules (always included) ===
+  parts.push(buildCommonRules(lex));
 
-  // RRID policy block (if defined in YAML).
-  const rrid = lex.reportingStandards?.arrive2Essentials?.description
-    ? ""
-    : "";
+  // === 2. Domain-specific rules (only if YAML has the data) ===
+  if (domain) {
+    if (domain.species) parts.push(buildSpeciesSection(domain.species, domain.key));
+    if (domain.stocks) parts.push(buildStocksSection(domain.stocks, domain.key));
+    if (domain.genotype) parts.push(buildGenotypeSection(domain.genotype));
+    if (domain.balancers) parts.push(buildBalancersSection(domain.balancers));
+    if (domain.nomenclature?.length) parts.push(buildNomenclatureSection(domain.nomenclature));
+    if (domain.key_citations?.length) parts.push(buildKeyCitationsSection(domain.key_citations));
+    if (domain.life_stages?.length) parts.push(buildLifeStagesSection(domain.life_stages));
+    if (domain.sex?.length) parts.push(buildSexSection(domain.sex));
+    if (domain.term_mappings?.length) parts.push(buildTermMappingsSection(domain.term_mappings));
+    if (domain.reporting) parts.push(buildReportingSection(domain.reporting, domain.key));
+    if (domain.standard_assays?.length) parts.push(buildAssaysSection(domain.standard_assays));
+  }
 
-  // Domain term mappings (sample first 3) — show the model we auto-correct.
-  const termMappings = (lex.domain.domainTermMappings ?? [])
-    .slice(0, 5)
-    .map((m) => `- "${m.source}" \u2192 "${m.target}"`)
-    .join("\n");
+  const label = domain?.name ?? domain?.key ?? "general";
+  return `[pi-paper-lab ACTIVE — field=${label}]\n\n${parts.join("\n\n")}`;
+}
 
-  return `
-[pi-paper-lab ACTIVE — field=drosophila-genetics]
+// === Common rules — AI-tells, hedging, voice, numbers, figures, citations ===
+function buildCommonRules(lex: Lexicon): string {
+  // Build a concise voice/rules block from the common lexicon.
+  return `You are writing scientific text. Follow these rules:
 
-You are writing scientific text in the style of Drosophila genetics papers (eLife,
-Genetics, G3, PLOS Genetics, Development, Nature Methods). The following HARD
-rules apply to every sentence you emit.
-
-== Species and stock conventions ==
-- The model organism is ${species}. First mention: "Drosophila melanogaster"
-  (italicized in print). Subsequent: "the fly", "Drosophila", or "flies".
-  NEVER "the fruit fly Drosophila melanogaster" (redundant).
-- Reference genetic stocks as "BDSC stock #91234" (or RRID:BDSC_91234 in the
-  Key Resources Table). Never invent stock numbers.
-- Genotypes: use italic convention in print; here format like
-  "y[1] w[1118]; +; P{GAL4}attP2". FlyBase order: X;Y;2;3;4. Use solidus / for
-  homologous chromosomes (e.g. "w[1118]/Y; CyO/+; TM6B/+").
-- Canonical balancers (do not confuse with MARKERS like Sp, If, Sb, Hu, Tb):
-  ${balancers}, and others from the FM7, CyO/SM-series, TM-series families.
-  NEVER write "Sp balancer" or "If balancer" — these are markers.
-- ALWAYS capitalize GAL4 (not "Gal4"). Use "promoter-GAL4" or "R57C10-GAL4".
-- Life stages: ${stages}. Use canonical names.
-- MARCM primary citation: Lee and Luo, 1999, Neuron 22:451–461 (NOT the 2001 TINS review).
-
-== Domain-term mappings (the extension auto-rewrites these in silent mode) ==
-${termMappings || "(no mappings loaded)"}
-When the user is talking about *Drosophila* neural lineage cells, always say
-"neuroblast" (or "NB"), never "neural stem cell".
-
-== Reporting standards ==
-The journal requires a Key Resources Table (KRT) with RRIDs for every
-antibody (RRID:AB_xxxxx), fly stock (RRID:BDSC_xxxxx), and cell line.
-Example methods line: "anti-Dpn (rabbit polyclonal, 1:500; gift from Y. Cai,
-RRID:AB_2090371)".
-
-== Lexical anti-AI rules ==
-NEVER use the following — they are signatures of AI prose and a reviewer 2
-will catch them on sight:
-${lex.avoidedVerbs.slice(0, 25).map((v) => `- ${v}`).join("\n")}
-
-Avoid these AI-tell nouns (anti-AI extension will rewrite silently):
-${lex.avoidedNouns.slice(0, 18).map((n) => `- ${n}`).join("\n")}
-
-Drop these filler words on sight:
-${lex.fillerAdverbs.slice(0, 14).map((a) => `- ${a}`).join("\n")}
-
-If a sentence begins with one of these openers, rewrite the opener:
-- "It is important to note that" / "It is worth noting that"
-- "Of note," / "Notably," / "Fascinatingly," / "Crucially,"
-- "In conclusion," / "To summarize," / "In summary,"
-- "We believe" / "We hypothesize that" / "for the first time"
-
-== Numbers policy ==
-- Every result claim MUST include (n=X per group, X biological replicates,
-  statistical test used, statistic value, p-value, effect size, 95% CI).
-- p-values as "p<0.001" (no leading zero before decimal). Use "ns" for
-  non-significant.
-- Effect size REQUIRED alongside p (Cohen's d, R², η², etc.).
-- For >5 comparisons per figure: state the multiple-testing correction.
-
-== Hedging calibration ==
-- Introduction: HIGH assertiveness. State the gap; state the question. No
-  "one might wonder". No "we speculated".
-- Methods: HIGHEST assertiveness. No hedging. Plain description.
-- Results: HIGH assertiveness. State findings directly. Example:
-  "We observed... (n=X, p=Y, d=Z)". No "may suggest" inside Results.
-- Discussion: moderate hedging. "These findings are consistent with..."
-  permitted. Speculation is allowed ONLY in the final paragraph and ONLY
-  with explicit hedged language.
+== Anti-AI prose ==
+Avoid these AI-tell phrases: ${lex.avoidedVerbs.slice(0, 10).map(v => `"${v}"`).join(", ")}, and others.
+Avoid these AI-tell nouns: ${lex.avoidedNouns.slice(0, 5).map(n => `"${n}"`).join(", ")}, and others.
+Delete filler adverbs: ${lex.fillerAdverbs.slice(0, 8).map(a => `"${a}"`).join(", ")}.
+Remove opener phrases: "It is important to note", "Of note", "Fascinatingly", "Notably", "In conclusion", "We believe".
 
 == Voice ==
-- Introduction: ${voiceIntro}.
-- Methods: "We crossed..." + passive ("Flies were raised on...") both fine.
-- Results: first person active ("We identified...", "We measured...").
-- Discussion: first person ("Our results suggest...", "We propose...").
+Introduction: HIGH assertiveness. State the gap; state the question. Preferred: "Here, we ...".
+Methods: HIGHEST assertiveness. No hedging. Use "We crossed..." or "Flies were raised on...".
+Results: HIGH assertiveness. State findings directly with n, p, effect size, 95% CI.
+Discussion: Moderate hedging. Speculation only in final paragraph with hedged language.
 
-== Figures and tables ==
-- Reference figures as "Figure 1A shows..." (active verb first) or
-  "(Figure 1A,B)". Never begin "As can be seen in Figure 1..." or
-  "It is evident from Figure 1...".
-- Each results paragraph must explicitly reference at least one Figure or
-  Table it derives from.
+== Numbers ==
+- Every result claim must include n per group, replicates, statistical test, statistic, p-value, effect size, 95% CI.
+- p-values as "p<0.001" (no leading zero before decimal). Use "ns" for non-significant.
+- Effect size REQUIRED alongside p (Cohen's d, R², η²).
+- Multiple-testing correction when >5 comparisons per figure.
+
+== Figures ==
+Reference as "Figure 1A shows..." (active verb first) or "(Figure 1A,B)". Never begin "As can be seen in Figure 1...".
 
 == Citations ==
-- Inline: (Author, Year) or Author et al. (Year).
-- NEVER invent DOIs, PMIDs, or stock numbers. If a claim needs a citation
-  you don't have locally, output [CITATION NEEDED: <topic>] in its place.
-- Cite primary studies, not reviews unless the review is the canonical
-  reference.
+Inline: (Author, Year) or Author et al. (Year). NEVER invent DOIs, PMIDs, or stock numbers.
+If a claim needs a citation you don't have, output [CITATION NEEDED: <topic>] in its place.
+Cite primary studies, not reviews unless the review is the canonical reference.`;
+}
 
-== Output format ==
-- Use Markdown. Italics and bold via *..* / **..**.
-- Paragraphs of 3–6 sentences. Vary sentence length intentionally.
-- No emoji. No em-dash overuse (≤1 per 1000 chars). Use periods or commas.
+// === Species section ===
+function buildSpeciesSection(species: NonNullable<DomainProfile["species"]>, key: string): string {
+  const lines: string[] = [`== Species conventions ==`];
+  if (species.first_mention) {
+    lines.push(`- First mention: "${species.first_mention}" (italicized in print).`);
+  }
+  if (species.subsequent?.length) {
+    lines.push(`- Subsequent: ${species.subsequent.map(s => `"${s}"`).join(", ")}.`);
+  }
+  if (species.avoid) {
+    lines.push(`- NEVER use redundant form: "${species.avoid}".`);
+  }
+  return lines.join("\n");
+}
 
-Final reminder: this voice is the Drosophila genetics standard, not a personal
-preference. Following it is part of the deliverable. The silent-rewrite
-extension will rewrite your output before display; produce text that already
-follows the rules so the rewrite has minimal work.
+// === Stocks section ===
+function buildStocksSection(stocks: NonNullable<DomainProfile["stocks"]>, key: string): string {
+  const lines: string[] = [`== Stocks / strains ==`];
+  if (stocks.format) lines.push(`- Format: "${stocks.format}".`);
+  if (stocks.rrid_prefix) lines.push(`- RRID prefix: ${stocks.rrid_prefix}<id>.`);
+  if (stocks.description) lines.push(`- ${stocks.description}`);
+  if (stocks.common_strains?.length) {
+    lines.push(`- Common strains: ${stocks.common_strains.join(", ")}.`);
+  }
+  if (stocks.rules?.length) {
+    lines.push(`- Rules:\n${stocks.rules.map(r => `  - ${r}`).join("\n")}`);
+  }
+  return lines.join("\n");
+}
 
-== Citation workflow (Module 2 — automated) ==
-Two commands do everything:
+// === Genotype section ===
+function buildGenotypeSection(genotype: NonNullable<DomainProfile["genotype"]>): string {
+  const lines: string[] = [`== Genotype format ==`];
+  if (genotype.format) lines.push(`- Format: "${genotype.format}".`);
+  if (genotype.chromosome_order) lines.push(`- Chromosome order: ${genotype.chromosome_order}.`);
+  if (genotype.rules?.length) {
+    lines.push(`- Rules:\n${genotype.rules.map(r => `  - ${r}`).join("\n")}`);
+  }
+  return lines.join("\n");
+}
 
-  /paper-cite <file.md>
-    → Reads the draft, identifies claims (LLM reasoning, not regex),
-      batch-searches Serper Scholar + CrossRef for sources,
-      assigns [N](doi:...) inline, generates References + .docx
+// === Balancers section ===
+function buildBalancersSection(balancers: NonNullable<DomainProfile["balancers"]>): string {
+  const lines: string[] = [`== Balancers ==`];
+  if (balancers.canonical?.length) {
+    lines.push(`- Canonical balancers: ${balancers.canonical.join(", ")}.`);
+  }
+  if (balancers.not_markers?.length) {
+    lines.push(`- These are MARKERS (not balancers): ${balancers.not_markers.join(", ")}.`);
+  }
+  if (balancers.warning) lines.push(`- WARNING: ${balancers.warning}`);
+  if (balancers.rules?.length) {
+    lines.push(`- Rules:\n${balancers.rules.map(r => `  - ${r}`).join("\n")}`);
+  }
+  return lines.join("\n");
+}
 
-  /paper-rewrite <file.md> [instructions...]
-    → Same as above, but FIRST rewrites the draft to remove AI-tells
-      and sloppy patterns. Your instructions after the file path guide
-      the rewrite (e.g. "make it more concise" or "focus on the gut data").
+// === Nomenclature section ===
+function buildNomenclatureSection(nomenclature: NonNullable<DomainProfile["nomenclature"]>): string {
+  const lines: string[] = [`== Nomenclature ==`];
+  for (const item of nomenclature) {
+    if (typeof item === "string") {
+      lines.push(`- ${item}`);
+    } else if (item.rule) {
+      lines.push(`- ${item.rule}`);
+    } else if (item.find && item.replace) {
+      lines.push(`- "${item.find}" → "${item.replace}".`);
+    }
+  }
+  return lines.join("\n");
+}
 
-When you see [CITE:topic] markers in a draft:
-1. Call find_citation(topic) for EACH marker — do it in BATCH (parallel)
-2. Pick the best candidate (primary research > review > preprint)
-3. Use crossref_lookup(doi) to verify the DOI is correct
-4. Replace [CITE:topic] with [N](doi:10.xxxx) or [N](<doi:10.xxxx>) for
-   DOIs with special chars
-5. An Introduction paragraph typically has 10-15 claims needing citations.
-   Do NOT under-cite.
-`.trim();
+// === Key citations section ===
+function buildKeyCitationsSection(keyCitations: NonNullable<DomainProfile["key_citations"]>): string {
+  const lines: string[] = [`== Key citations (mandatory) ==`];
+  for (const c of keyCitations) {
+    if (c.term && c.must_cite) {
+      lines.push(`- "${c.term}" → must cite: ${c.must_cite}${c.doi ? ` (doi:${c.doi})` : ""}.`);
+      if (c.not) lines.push(`  NOT: ${c.not}.`);
+    }
+  }
+  return lines.join("\n");
+}
+
+// === Life stages section ===
+function buildLifeStagesSection(stages: string[]): string {
+  return `== Life stages ==\nCanonical names: ${stages.join(", ")}.`;
+}
+
+// === Sex section ===
+function buildSexSection(sex: string[]): string {
+  return `== Sex (canonical names) ==\n${sex.join(", ")}.`;
+}
+
+// === Term mappings section ===
+function buildTermMappingsSection(mappings: Array<{ source: string; target: string }>): string {
+  const lines: string[] = [`== Domain term mappings ==`];
+  for (const m of mappings) {
+    lines.push(`- "${m.source}" → "${m.target}".`);
+  }
+  return lines.join("\n");
+}
+
+// === Reporting section ===
+function buildReportingSection(reporting: NonNullable<DomainProfile["reporting"]>, key: string): string {
+  const lines: string[] = [`== Reporting standards ==`];
+  if (reporting.rrid_required) {
+    lines.push(`- RRIDs REQUIRED for: ${(reporting.rrid_types ?? []).join(", ")}.`);
+  }
+  if (reporting.key_resources_table) {
+    lines.push(`- Include a Key Resources Table (KRT) at end of manuscript.`);
+  }
+  if (reporting.arrive2) {
+    lines.push(`- ARRIVE 2.0 essential 10 (${reporting.arrive2_reference ?? "Percie du Sert et al. 2020"}):`);
+    if (reporting.arrive2_essential_10) {
+      for (const item of reporting.arrive2_essential_10) {
+        lines.push(`  ${item}`);
+      }
+    }
+    if (reporting.ethical_approval) lines.push(`- ${reporting.ethical_approval}`);
+  }
+  if (reporting.miqe) {
+    lines.push(`- MIQE guidelines required for qPCR experiments.`);
+  }
+  // Acknowledgements
+  if (reporting.acknowledge_bdsc) lines.push(`- BDSC acknowledgement: "${reporting.acknowledge_bdsc}"`);
+  if (reporting.acknowledge_jax) lines.push(`- JAX acknowledgement: "${reporting.acknowledge_jax}"`);
+  if (reporting.acknowledge_cgc) lines.push(`- CGC acknowledgement: "${reporting.acknowledge_cgc}"`);
+  if (reporting.acknowledge_wormbase) lines.push(`- WormBase acknowledgement: "${reporting.acknowledge_wormbase}"`);
+  if (reporting.rigorous_statistics) lines.push(`- ${reporting.rigorous_statistics}`);
+  return lines.join("\n");
+}
+
+// === Standard assays section ===
+function buildAssaysSection(assays: string[]): string {
+  return `== Standard assays ==\nCanonical names: ${assays.join(", ")}.`;
 }

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { loadLexicon } from "../src/anti-ai-lexicon.ts";
 import { buildSystemInjection } from "../src/system-injection.ts";
+import { discoverDomains, getDomain } from "../src/domains.ts";
 import { silentRewrite } from "../src/anti-ai-lexicon.ts";
 import { registerTools } from "../src/tools.ts";
 import { pipelineCite, pipelineRewrite, pipelineWrite, generateWord } from "../src/pipeline.ts";
@@ -25,7 +26,10 @@ const ROOT = join(__dirname, "..");
 
 export default function (pi: ExtensionAPI) {
   const lex = loadLexicon(ROOT);
-  const injection = buildSystemInjection(lex);
+  const domains = discoverDomains(ROOT);
+  // Use first domain for now (config-based selection comes in Step 4)
+  const activeDomain = domains[0] ?? null;
+  const injection = buildSystemInjection(lex, activeDomain);
 
   // === 1. Inject Drosophila voice into the system prompt on every turn ===
   pi.on("before_agent_start", async (event, _ctx) => {
