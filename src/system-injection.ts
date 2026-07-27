@@ -15,8 +15,8 @@ export function buildSystemInjection(lex: Lexicon, domain: DomainProfile | null)
 
   // === 2. Domain-specific rules (only if YAML has the data) ===
   if (domain) {
-    if (domain.species) parts.push(buildSpeciesSection(domain.species, domain.key));
-    if (domain.stocks) parts.push(buildStocksSection(domain.stocks, domain.key));
+    if (domain.species) parts.push(buildSpeciesSection(domain.species));
+    if (domain.stocks) parts.push(buildStocksSection(domain.stocks));
     if (domain.genotype) parts.push(buildGenotypeSection(domain.genotype));
     if (domain.balancers) parts.push(buildBalancersSection(domain.balancers));
     if (domain.nomenclature?.length) parts.push(buildNomenclatureSection(domain.nomenclature));
@@ -24,8 +24,9 @@ export function buildSystemInjection(lex: Lexicon, domain: DomainProfile | null)
     if (domain.life_stages?.length) parts.push(buildLifeStagesSection(domain.life_stages));
     if (domain.sex?.length) parts.push(buildSexSection(domain.sex));
     if (domain.term_mappings?.length) parts.push(buildTermMappingsSection(domain.term_mappings));
-    if (domain.reporting) parts.push(buildReportingSection(domain.reporting, domain.key));
+    if (hasAnyReportingData(domain.reporting)) parts.push(buildReportingSection(domain.reporting!));
     if (domain.standard_assays?.length) parts.push(buildAssaysSection(domain.standard_assays));
+    if (domain.voice && hasAnyVoiceData(domain.voice)) parts.push(buildVoiceSection(domain.voice));
   }
 
   const label = domain?.name ?? domain?.key ?? "general";
@@ -45,7 +46,7 @@ Remove opener phrases: "It is important to note", "Of note", "Fascinatingly", "N
 
 == Voice ==
 Introduction: HIGH assertiveness. State the gap; state the question. Preferred: "Here, we ...".
-Methods: HIGHEST assertiveness. No hedging. Use "We crossed..." or "Flies were raised on...".
+Methods: HIGHEST assertiveness. No hedging. Plain description of what was done.
 Results: HIGH assertiveness. State findings directly with n, p, effect size, 95% CI.
 Discussion: Moderate hedging. Speculation only in final paragraph with hedged language.
 
@@ -65,7 +66,7 @@ Cite primary studies, not reviews unless the review is the canonical reference.`
 }
 
 // === Species section ===
-function buildSpeciesSection(species: NonNullable<DomainProfile["species"]>, key: string): string {
+function buildSpeciesSection(species: NonNullable<DomainProfile["species"]>): string {
   const lines: string[] = [`== Species conventions ==`];
   if (species.first_mention) {
     lines.push(`- First mention: "${species.first_mention}" (italicized in print).`);
@@ -80,7 +81,7 @@ function buildSpeciesSection(species: NonNullable<DomainProfile["species"]>, key
 }
 
 // === Stocks section ===
-function buildStocksSection(stocks: NonNullable<DomainProfile["stocks"]>, key: string): string {
+function buildStocksSection(stocks: NonNullable<DomainProfile["stocks"]>): string {
   const lines: string[] = [`== Stocks / strains ==`];
   if (stocks.format) lines.push(`- Format: "${stocks.format}".`);
   if (stocks.rrid_prefix) lines.push(`- RRID prefix: ${stocks.rrid_prefix}<id>.`);
@@ -168,7 +169,7 @@ function buildTermMappingsSection(mappings: Array<{ source: string; target: stri
 }
 
 // === Reporting section ===
-function buildReportingSection(reporting: NonNullable<DomainProfile["reporting"]>, key: string): string {
+function buildReportingSection(reporting: NonNullable<DomainProfile["reporting"]>): string {
   const lines: string[] = [`== Reporting standards ==`];
   if (reporting.rrid_required) {
     lines.push(`- RRIDs REQUIRED for: ${(reporting.rrid_types ?? []).join(", ")}.`);
@@ -177,7 +178,7 @@ function buildReportingSection(reporting: NonNullable<DomainProfile["reporting"]
     lines.push(`- Include a Key Resources Table (KRT) at end of manuscript.`);
   }
   if (reporting.arrive2) {
-    lines.push(`- ARRIVE 2.0 essential 10 (${reporting.arrive2_reference ?? "Percie du Sert et al. 2020"}):`);
+    lines.push(`- ARRIVE 2.0 essential 10${reporting.arrive2_reference ? ` (${reporting.arrive2_reference})` : ""}:`);
     if (reporting.arrive2_essential_10) {
       for (const item of reporting.arrive2_essential_10) {
         lines.push(`  ${item}`);
@@ -200,4 +201,35 @@ function buildReportingSection(reporting: NonNullable<DomainProfile["reporting"]
 // === Standard assays section ===
 function buildAssaysSection(assays: string[]): string {
   return `== Standard assays ==\nCanonical names: ${assays.join(", ")}.`;
+}
+
+// === Voice section (domain-specific overrides for each IMRaD section) ===
+function buildVoiceSection(voice: NonNullable<DomainProfile["voice"]>): string {
+  const lines: string[] = [`== Domain voice overrides ==`];
+  if (voice.introduction) lines.push(`- Introduction: ${voice.introduction}`);
+  if (voice.methods) lines.push(`- Methods: ${voice.methods}`);
+  if (voice.results) lines.push(`- Results: ${voice.results}`);
+  if (voice.discussion) lines.push(`- Discussion: ${voice.discussion}`);
+  return lines.join("\n");
+}
+
+// === Helpers: only emit a section header if it has actual content ===
+function hasAnyReportingData(reporting: DomainProfile["reporting"]): boolean {
+  if (!reporting) return false;
+  return !!(
+    reporting.rrid_required ||
+    reporting.key_resources_table ||
+    reporting.arrive2 ||
+    reporting.miqe ||
+    reporting.acknowledge_bdsc ||
+    reporting.acknowledge_jax ||
+    reporting.acknowledge_cgc ||
+    reporting.acknowledge_wormbase ||
+    reporting.rigorous_statistics
+  );
+}
+
+function hasAnyVoiceData(voice: DomainProfile["voice"]): boolean {
+  if (!voice) return false;
+  return !!(voice.introduction || voice.methods || voice.results || voice.discussion);
 }
