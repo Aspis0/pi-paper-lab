@@ -2,7 +2,9 @@
 
 > **Goal**: Before writing or rewriting, the LLM does a "study phase" — searches the literature, reads abstracts/snippets, synthesizes notes — THEN writes. Like "deep research" mode in Perplexity/Claude/Gemini, applied to scientific paper writing.
 >
-> **Scope**: `/paper-write` and `/paper-rewrite` only. `/paper-cite` does NOT need a study phase (text already exists, citations are found per-claim via `find_citation`).
+> **Scope**: `/paper-write` and `/paper-rewrite` only. `/paper-cite` does NOT need a study phase (text already exists, citations are found per-claim).
+>
+> **Approach**: Prompt-only — the LLM uses its existing tools (`find_citation`, `scholar_search`, `web_search`, `fetch_content`) for the study. No new code.
 
 ---
 
@@ -13,7 +15,7 @@ Current state: `/paper-write "micro-CT Drosophila cancer cachexia"` → LLM writ
 - Generic voice (doesn't sound like the specific field's literature)
 - Missed key concepts the field cares about
 
-With study phase: LLM first reads 5-10 recent papers on the topic, extracts:
+With study phase: LLM first searches the literature (5-10 papers), extracts:
 - What's the state of the art? Key findings?
 - What methods are standard in this literature?
 - How do papers in this field structure themselves? Voice?
@@ -24,324 +26,141 @@ THEN writes — grounded in real literature, not just training data.
 
 ---
 
-## Research: how other systems do this
+## Why prompt-only (no new tool)
 
-From web search on AI writing assistants with research phases:
+Initially the plan proposed a new `study_topic` tool that bundled Serper Scholar + CrossRef. After audit feedback, we simplified:
 
-| System | Approach |
-|---|---|
-| **Perplexity Deep Research** | Iterative planning → dozens of searches → reads sources → refines plan → synthesizes report with citations |
-| **Claude Deep Research** | Multi-agent: planner → searcher → synthesizer. Uses web tools, iterates on plan |
-| **Gemini Deep Research** | Plan-and-execute loop: generates research plan, runs searches in parallel, synthesizes |
-| **GPT Deep Research** | Multi-step agent: clarifies query → plans → searches → reads → iterates → writes long report |
-| **research-pipeline (GitHub)** | Deterministic stages: plan → search → screen → quality → download → convert → extract → summarize → report |
+**The LLM already has the tools it needs**:
+- `find_citation(topic)` — Serper Scholar + CrossRef (existing, working)
+- `scholar_search(query)` — direct Serper Scholar (existing)
+- `crossref_lookup(doi)` — DOI metadata + abstract (existing)
+- `web_search(query)` — web search (Exa / Brave / etc.) — **free, already integrated**
+- `fetch_content(url)` — fetch any URL content
 
-**Common pattern**:
-1. Plan queries (decompose topic into sub-queries)
-2. Search in parallel (Serper Scholar, CrossRef, Semantic Scholar, arXiv)
-3. Read abstracts/snippets (NOT full PDFs — too slow)
-4. Synthesize structured notes (topic summary, key concepts, methods, voice, refs)
-5. Iterate if notes are thin (re-search, read more)
+**No new code needed**. The pipeline prompt instructs the LLM to call these tools before writing. The LLM synthesizes the notes itself (LLMs do synthesis better than code anyway).
 
-**For our use case** (scientific paper writing), we don't need 100 papers — we need 5-10 recent, highly-cited papers on the exact topic. The LLM synthesizes notes, then writes grounded in them.
+This approach also means:
+- Study phase is **opt-in by prompt** — the LLM might skip it, but the prompt strongly encourages it
+- Study phase uses **whatever tool the LLM thinks best** — `find_citation` for academic, `web_search` for broader context, `fetch_content` for full abstracts
+- **Zero new API costs** — uses existing Serper + web_search
+- **Domain auto-detection** still happens (the pipeline resolves domain before sending prompt)
 
 ---
 
 ## Architecture
 
-### Where the study phase lives
+### Flow
 
 ```
 /paper-write "<description>"
   ↓
-[STUDY] ← NEW: search + read abstracts + synthesize notes
-  ↓
-study-notes.md (saved to disk for the LLM to reference)
-  ↓
-[WRITE] ← existing pipeline (Step 1)
-  ↓
-[AI CHECK + CITE + FINALIZE]
+pipelineWrite sends follow-up message with:
+  STEP 0 — STUDY (call find_citation/web_search, synthesize notes)
+  STEP 1 — WRITE (using notes + system prompt voice)
+  STEP 2 — AI CHECK
+  STEP 3 — CITE
+  STEP 4 — FINALIZE
+  STEP 5 — REPORT
 ```
 
-Same for `/paper-rewrite` — but the study phase is lighter (the text already exists; we just need context on the topic).
+Same for `/paper-rewrite`, but STEP 0 is lighter (text already exists; just refresh context if topic is unclear).
 
 ### What the LLM does in the study phase
 
 Given a topic like "micro-CT imaging in Drosophila cancer cachexia":
 
-1. **Search** (3-5 parallel calls to `find_citation`):
+1. **Search** (3-5 parallel calls to `find_citation` or `web_search`):
    - "Drosophila micro-CT cancer cachexia"
    - "whole-body imaging tumor cachexia"
    - "micro-computed tomography insect"
    - "Yki gut tumor Drosophila"
    - "high-resolution imaging tumor progression fly"
 
-2. **Read** the top 5-10 results (snippets from Serper Scholar + abstracts from CrossRef)
+2. **Read** the top 5-10 results (snippets from Serper Scholar or web_search)
 
-3. **Synthesize** into `study-notes.md` with structure:
+3. **Optionally fetch full content** via `fetch_content` for the most relevant papers' abstract pages
+
+4. **Synthesize** into `study-notes.md` with structure:
    ```markdown
    # Study notes: <topic>
-   
+
    ## Topic summary
    <2-3 sentences: what is this paper about, why does it matter>
-   
+
    ## Key concepts
    - <term 1>: <definition specific to this field>
    - <term 2>: <definition>
    ...
-   
+
    ## Standard methods in this literature
    - <method 1>: <how it's typically done>
    ...
-   
+
    ## Voice / structure observations
    - Papers in this field typically <observation>
    - Common section structure: <observation>
    ...
-   
-   ## Candidate references (top 5-10 with DOIs)
+
+   ## Candidate references (numbered, with DOIs)
    1. Author et al. (Year). Title. Journal. doi:10.xxxx
    2. ...
-   
-   ## Specific findings to ground the draft
-   - <Finding 1>: <what the literature says>
-   ...
+
+   ## Specific findings to ground the draft (tagged with ref numbers)
+   - [ref 1] <Finding 1>: <what the literature says>
+   - [ref 2] <Finding 2>: ...
    ```
 
-4. **Write** the draft using the study notes + system prompt voice rules.
+5. **Write** the draft using the study notes + system prompt voice rules.
+
+### Storage location
+
+Study notes saved next to the draft:
+- `/paper-write <description>` → `~/Desktop/paper-write-output.study-notes.md`
+- `/paper-rewrite <file>` → `<basename_without_ext>.study-notes.md`
+  - If user passed `paper.docx`, notes go to `paper.study-notes.md` (next to the .docx, not appended to its name)
+  - The pipeline already converts .docx → .md internally
 
 ### Why save to file?
 
-- The LLM can `read` the file to reference it during writing
-- If the LLM loses context (long conversations), notes persist
-- User can inspect/edit notes before writing (optional)
-- Citable: notes are auditable artifacts
+- The LLM can `read` the file to reference it during writing (long contexts)
+- Notes persist across turns
+- User can inspect/edit notes before final write
+- Auditable artifact
 
 ---
 
-## Implementation
-
-### Option A: Prompt-only (simplest)
-
-Instruct the LLM in the pipeline prompt to do the study phase using existing tools (`find_citation`, `scholar_search`, `crossref_lookup`). No new code.
-
-**Pros**: Zero new code. Uses existing tools.
-**Cons**: LLM may skip steps. Less control over study depth.
-
-### Option B: New `study_topic` tool
-
-Add a `study_topic(description, domain?, num=10)` tool that:
-- Searches Serper Scholar + CrossRef
-- Returns structured notes (topic summary, key concepts, methods, voice, refs)
-- Optionally saves to file
-
-**Pros**: Consistent study phase. LLM gets reliable structured output.
-**Cons**: More code. Another tool to maintain.
-
-### Option C: Hybrid (recommended)
-
-- Add `study_topic` tool (Option B) for the LLM to call explicitly
-- The pipeline prompt strongly instructs the LLM to use it
-- If the LLM skips, the pipeline still works (just less grounded)
-
-**Pros**: Best of both. Tool available, prompt enforces, fallback works.
-
----
-
-## Recommended implementation steps
-
-### Step 1: Add `study_topic` tool
-
-**File**: `src/study.ts` (NEW)
-
-```typescript
-// src/study.ts
-// Study phase: search literature + synthesize notes before writing.
-
-import { searchScholar } from "./serper-scholar.ts";
-import { lookupDoi } from "./crossref.ts";
-import { getSerperKey } from "./config.ts";
-
-export interface StudyNote {
-  topic: string;
-  summary: string;
-  keyConcepts: Array<{ term: string; definition: string }>;
-  methods: string[];
-  voiceObservations: string[];
-  candidateReferences: Array<{
-    title: string;
-    authors: string[];
-    year?: number;
-    venue?: string;
-    doi?: string;
-    snippet?: string;
-  }>;
-  findings: string[];
-}
-
-export async function runStudy(
-  description: string,
-  opts?: { num?: number; domain?: string }
-): Promise<StudyNote> {
-  const num = opts?.num ?? 10;
-
-  // 1. Multi-query search for diverse results
-  const queries = expandQueries(description, opts?.domain);
-  const allResults: ScholarResult[] = [];
-  for (const q of queries) {
-    try {
-      const results = await searchScholar(q, { num: Math.ceil(num / queries.length) });
-      allResults.push(...results);
-    } catch {
-      // continue with partial results
-    }
-  }
-
-  // 2. Deduplicate by DOI/title
-  const deduped = dedupeByDoi(allResults).slice(0, num);
-
-  // 3. For each result, try to fetch abstract via CrossRef
-  const enriched = await Promise.all(
-    deduped.map(async (r) => {
-      const doi = extractDoi(r.link);
-      if (doi) {
-        const work = await lookupDoi(doi);
-        return { ...r, doi, abstract: work?.abstract };
-      }
-      return r;
-    })
-  );
-
-  // 4. Return structured notes (synthesis happens in the LLM)
-  return {
-    topic: description,
-    summary: "", // filled by LLM
-    keyConcepts: [], // filled by LLM
-    methods: [], // filled by LLM
-    voiceObservations: [], // filled by LLM
-    candidateReferences: enriched.map((r) => ({
-      title: r.title,
-      authors: r.authors,
-      year: r.year,
-      venue: r.venue,
-      doi: r.doi,
-      snippet: r.snippet,
-    })),
-    findings: [], // filled by LLM
-  };
-}
-```
-
-**Tool registration** in `src/tools.ts`:
-```typescript
-{
-  name: "study_topic",
-  description: "Search the scientific literature for papers on a topic. Returns structured study notes (topic summary, candidate references with DOIs, abstracts) for use before writing.",
-  parameters: Type.Object({
-    topic: Type.String({ description: "What to research (e.g. 'micro-CT Drosophila cancer cachexia')" }),
-    num: Type.Optional(Type.Number({ description: "Number of papers to retrieve (default 10)" }),
-  }),
-  execute: async (args, ctx) => {
-    const notes = await runStudy(args.topic, { num: args.num ?? 10 });
-    return notes;
-  },
-}
-```
-
-### Step 2: Update `pipelineWrite` prompt
-
-Add Step 0 (STUDY) before Step 1 (WRITE):
-
-```
-STEP 0 — STUDY: Call the study_topic tool with a clear research query
-  derived from your description. Run 1 call with num=10.
-  Read the candidate references and snippets.
-  Write study-notes.md to <same folder as output> with:
-    - Topic summary (2-3 sentences)
-    - Key concepts (5-10 terms specific to this field)
-    - Standard methods used in this literature
-    - Voice/structure observations
-    - Candidate references with DOIs
-  Then proceed to STEP 1.
-
-STEP 1 — WRITE: Write the draft using study-notes.md as ground truth.
-  - Cite real papers from your study notes, not made-up ones
-  - Use the field-specific terminology you discovered
-  - Match the voice/style observations from your study notes
-  ...
-```
-
-### Step 3: Update `pipelineRewrite` prompt (lighter study)
-
-For rewrite, the text already exists. The study phase is lighter:
-
-```
-STEP 0 — CONTEXT (optional, only if topic is unclear):
-  If the draft's topic is ambiguous, call study_topic to refresh context.
-  Most rewrites don't need this — proceed to STEP 1.
-
-STEP 1 — REWRITE: ...
-```
-
-### Step 4: Storage of study notes
-
-Default location: `<draft_output_dir>/study-notes.md`
-
-For `/paper-write <description>`:
-- Default output: `~/Desktop/paper-write-output.md`
-- Study notes: `~/Desktop/paper-write-output.study-notes.md`
-
-For `/paper-rewrite <file>`:
-- Study notes (if generated): `<file>.study-notes.md`
-
-### Step 5: Auto-detect domain before study
-
-Before calling `study_topic`, detect the domain from the description (using existing `detectDomain`). Use domain keywords to expand the search queries:
-
-```typescript
-const domains = discoverDomains(ROOT);
-const domain = detectDomain(description, domains);
-const domainKeywords = domains.find(d => d.key === domain)?.detect_keywords ?? [];
-```
-
-Then `expandQueries(description, domain)` adds domain keywords to each query.
-
-### Step 6: Token / cost considerations
-
-- Study phase uses ~5-10 search calls
-- Each result is a snippet (~200 tokens) + maybe an abstract (~300 tokens)
-- Total study context: ~5K tokens
-- Acceptable for scientific writing (vs full PDF parsing = 100K+ tokens)
-
-User can configure `num` parameter to control depth:
-- Quick: `num=3`
-- Default: `num=10`
-- Deep: `num=20`
-
----
-
-## Prompt template (final)
+## Updated prompt templates
 
 ### `/paper-write` prompt
 
 ```
 Paper draft: <description>
 
-STEP 0 — STUDY:
-  1. Call study_topic with: "<description>" + any domain-specific keywords you detect
-  2. Read the returned candidate references (title, snippet, abstract)
-  3. Write study-notes.md to <output_dir> with:
+STEP 0 — STUDY (before writing anything):
+  a) Call find_citation 3-5 times IN PARALLEL with different query variants:
+     "<description>" (as-is)
+     <reversed word order of description>
+     <description with synonyms (imaging↔characterization, etc.)>
+     <narrower scope>
+     "<description> review"
+     Use the queries that best capture this topic.
+  b) Optionally: call web_search or fetch_content for broader context or
+     to get full abstracts (not just snippets).
+  c) If all searches fail: note this in study-notes.md, mark uncertain claims
+     with [CITATION NEEDED], proceed to STEP 1 anyway (NEVER block).
+  d) Write study-notes.md to <output_dir>/paper-write-output.study-notes.md:
+     # Study notes: <topic>
      ## Topic summary (2-3 sentences)
-     ## Key concepts (5-10 terms)
+     ## Key concepts (5-10 terms specific to this field)
      ## Standard methods in this literature
      ## Voice / structure observations
-     ## Candidate references (with DOIs)
-     ## Specific findings to ground the draft
-  4. Report the number of papers reviewed
+     ## Candidate references (numbered, with DOIs)
+     ## Specific findings (each tagged [ref N] from candidate list)
+  e) Report the number of papers reviewed.
 
 STEP 1 — WRITE: Use study-notes.md + system prompt voice rules.
-  - Ground every claim in your study notes
-  - Use real DOIs from candidate references
+  - Ground every claim in study notes (cite paper N where N is in candidate list)
+  - Use the DOIs from study-notes.md, NOT invented ones
   - Match voice/style observations
   - Save draft to <output_dir>/paper-write-output.md
 
@@ -349,59 +168,106 @@ STEP 2 — AI CHECK: Call ai_detect_statistical on your draft.
   If score >40%, rewrite flagged sentences. Re-test. Max 3 rounds.
 
 STEP 3 — CITE: For each [CITE:topic] in the draft, call find_citation.
-  Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets.
+  Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets (even for DOIs with parens).
   Update the draft.
 
 STEP 4 — FINALIZE: Run this bash command:
   node --experimental-strip-types -e "import('<root>/src/pipeline.ts').then(({finalizeDoc}) => { const r = finalizeDoc('<output>'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"
 
-STEP 5 — REPORT: Tell the user the .docx path and the number of papers studied.
+STEP 5 — REPORT: Tell the user:
+  - Number of papers studied
+  - Path to study-notes.md
+  - Path to .docx
   Do NOT read the .docx (binary).
 ```
+
+IMPORTANT: STEP 0 (study) requires waiting for tool calls to return.
+Complete STEPs 1-5 in the SAME turn after receiving study results.
 
 ### `/paper-rewrite` prompt (lighter study)
 
 ```
 Draft to rewrite: <file>
 
-STEP 0 — CONTEXT REFRESH (skip if topic is clear):
-  If the draft's topic is ambiguous, call study_topic.
-  Otherwise, proceed to STEP 1.
+STEP 0 — CONTEXT REFRESH (optional, only if topic is unclear):
+  If the draft's topic is ambiguous or you need to ground claims in
+  recent literature, call find_citation 1-3 times.
+  Most rewrites skip this — proceed to STEP 1.
 
-STEP 1 — REWRITE: ...
-STEP 2-4: ...
+STEP 1 — REWRITE: Rewrite the draft for human scientific voice
+  (follow your domain's voice rules from the system prompt).
+  If you did STEP 0, use study-notes.md as additional context.
+  ${rewriteInstructions ? "Extra instructions: " + rewriteInstructions : ""}
+
+STEP 2 — AI CHECK: Call ai_detect_statistical.
+  If score >40%, rewrite flagged sentences. Re-test. Max 3 rounds.
+
+STEP 3 — CITE: For each [CITE:topic] in the rewritten draft, call find_citation.
+  Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets.
+
+STEP 4 — FINALIZE: Run finalizeDoc via bash (one command).
+
+STEP 5 — REPORT: Tell the user the .docx path.
 ```
+
+---
+
+## Implementation (simpler than original plan)
+
+### Step 1: Update `pipelineWrite` prompt
+
+**File**: `src/pipeline.ts` — `pipelineWrite` function
+
+Add STEP 0 (STUDY) with explicit instructions to call `find_citation` and optionally `web_search`/`fetch_content`.
+
+### Step 2: Update `pipelineRewrite` prompt
+
+**File**: `src/pipeline.ts` — `buildCiteMarkPrompt` when `includeRewrite=true`
+
+Add STEP 0 (CONTEXT REFRESH, optional).
+
+### Step 3: Add `study-notes.md` storage convention
+
+**File**: `src/pipeline.ts` — `pipelineWrite` and `pipelineRewrite`
+
+Save notes next to the output file:
+- `pipelineWrite`: `~/Desktop/paper-write-output.study-notes.md`
+- `pipelineRewrite`: `<basename_without_ext>.study-notes.md` (next to the original file)
+
+### Step 4: Update README
+
+**File**: `README.md`
+
+Add a "Study phase" section explaining the new behavior.
 
 ---
 
 ## Execution order
 
 ```
-Step 1: src/study.ts (new)
-Step 2: register study_topic tool in src/tools.ts
-Step 3: update pipelineWrite prompt
-Step 4: update pipelineRewrite prompt
-Step 5: add study-notes.md storage convention
-Step 6: auto-detect domain in study calls
-Step 7: add tests
-Step 8: update README
+Step 1: pipelineWrite prompt (add STEP 0)
+Step 2: pipelineRewrite prompt (add optional STEP 0)
+Step 3: study-notes.md storage convention
+Step 4: README update
 ```
 
-Each step gates the next. After Step 4, the study phase is functional.
+Each step gates the next. Total: ~4 file edits, no new code files.
 
 ## Non-negotiable rules
 
-1. Study phase is OPT-IN via the tool — pipeline prompt strongly recommends it but doesn't force it
-2. Study phase adds NO new external API requirements — uses existing Serper + CrossRef
-3. Study notes saved to disk in a predictable location
-4. `/paper-cite` does NOT get a study phase (citations already come from inline claims)
-5. Study phase never blocks the pipeline — if it fails, the pipeline continues without notes
-6. Domain auto-detection runs BEFORE study to bias search queries toward the right field
+1. Study phase is **prompt-instructed** — LLM may skip, but the prompt strongly recommends it
+2. Study phase **NEVER blocks the pipeline** — if all searches fail, LLM proceeds with [CITATION NEEDED] markers
+3. `/paper-cite` does NOT get a study phase (citations already come from inline claims)
+4. Study phase uses **existing tools** (`find_citation`, `scholar_search`, `web_search`, `fetch_content`) — no new APIs
+5. Study notes saved to disk in a predictable location, adjacent to the draft
+6. Study phase never reads the .docx (binary)
+7. `/paper-rewrite` study phase is **lighter** (text exists; just refresh if ambiguous)
 
 ## Future enhancements (v0.7+)
 
-- `num` config in `/paper-lab` (default study depth)
-- Study notes summarization by a smaller LLM (cost reduction)
-- Multi-language support (study in user's language, write in English)
+- Iterative refinement: if study-notes.md has < 3 findings, re-search with adjusted queries
+- User confirmation of search plan before executing (Perplexity pattern)
+- Multi-language support
 - ArXiv full-text search for preprints
 - Semantic Scholar + OpenAlex as additional sources
+- Configurable study depth (`/paper-lab` option)
