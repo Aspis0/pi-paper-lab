@@ -1,0 +1,70 @@
+# Neuroscience domain profile
+# Filename (without .yaml) is the domain key: "neuroscience"
+# Sources: eNeuro reporting standards, MINSCOPE wiki, RRID:Antibody Registry
+
+name: "Neuroscience"
+
+journals:
+  - Neuron
+  - Nature
+  - "Nature Neuroscience"
+  - "Nature Methods"
+  - Cell
+  - eNeuro
+  - "Journal of Neuroscience"
+
+# Neuroscience papers span many species — species is intentionally absent.
+
+# Nomenclature
+nomenclature:
+  - rule: "Brain region abbreviations: CA1, CA3, V1, S1, M1, DG (dentate gyrus), PFC (prefrontal cortex)"
+  - rule: "Neuron types: pyramidal, interneuron (parvalbumin+, somatostatin+, VIP+)"
+  - rule: "Receptor names: AMPA, NMDA, GABA-A, GABA-B (no italics)"
+  - rule: "Channel names: Nav1.1, Kv3.1 (gene/protein convention per species)"
+  - rule: "Recording types: patch-clamp (whole-cell, cell-attached), extracellular (single-unit, multi-unit), two-photon, calcium imaging (GCaMP)"
+  - rule: "Always report animal species, strain, age, sex for in vivo experiments"
+  - rule: "Brain coordinates: use Allen Brain Atlas reference atlas"
+
+# Standard assays
+standard_assays:
+  - "patch-clamp recording"
+  - "extracellular recording"
+  - "two-photon imaging"
+  - "calcium imaging (GCaMP)"
+  - "optogenetics"
+  - "chemogenetics (DREADD)"
+  - "fiber photometry"
+  - "miniscope imaging"
+  - "behavioral assay (open field, fear conditioning, Morris water maze)"
+  - "immunohistochemistry"
+  - "in situ hybridization"
+
+# Auto-detect keywords
+detect_keywords: [neuron, synapse, cortex, hippocampus, amygdala, "brain region", "patch-clamp", "two-photon", GCaMP, "action potential", "membrane potential", optogenetics, DREADD, "fiber photometry", pyramidal, interneuron, "Allen Brain"]
+
+# Term mappings
+term_mappings:
+  - source: "brain activity"
+    target: "neural activity"
+  - source: "neuronal firing"
+    target: "action potential firing"
+
+# Reporting standards
+reporting:
+  rrid_required: true
+  rrid_types: [antibody, "mouse line", "plasmid", virus]
+  key_resources_table: true
+  arrive2: false  # only if using animals — paper should specify
+  rigorous_statistics: "Statistics for neuroscience research: use estimation statistics (effect sizes with CIs), not just NHST"
+
+# Voice rules
+voice:
+  introduction: "HIGH assertiveness. State the gap; state the question."
+  methods: "HIGHEST assertiveness. Detail species, strain, recording method, sample size."
+  results: "HIGH assertiveness. State findings with n (cells, animals), p, effect size, 95% CI."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
+
+# Sex
+sex:
+  - female
+  - male

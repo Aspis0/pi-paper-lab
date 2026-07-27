@@ -1,0 +1,108 @@
+# C. elegans domain profile
+# Filename (without .yaml) is the domain key: "c-elegans"
+# Sources: WormBook nomenclature, CGC strain naming conventions
+
+name: "C. elegans"
+
+journals:
+  - Genetics
+  - "PLOS Genetics"
+  - Development
+  - "Cell Reports"
+  - "Nature"
+  - eLife
+
+# Species
+species:
+  first_mention: "Caenorhabditis elegans"
+  subsequent: ["the worm", "C. elegans", "worms", "nematodes"]
+  avoid: "the nematode Caenorhabditis elegans"
+
+# Stocks — CGC strains
+stocks:
+  format: "N2"
+  rrid_prefix: "RRID:WB-STRAIN_"
+  description: "Caenorhabditis Genetics Center (CGC)"
+  rules:
+    - "Strain names: 2-3 uppercase letters + number (e.g. N2, CB112, BA17)"
+    - "Lab code identifies the originating lab"
+    - "Wild type is always N2 (Bristol strain)"
+
+# Genotype format
+genotype:
+  format: "BA17 (fem-1(hc17_ts)) IV"
+  rules:
+    - "Roman numerals indicate linkage group (I, II, III, IV, V, X)"
+    - "Genes in parentheses within genotype"
+    - "Mutation alleles in parentheses"
+
+# Nomenclature — Brenner 1974, Horvitz 1979
+nomenclature:
+  - rule: "Gene names: 3 italic lowercase letters + hyphen + number (e.g. _let-37_, _dpy-5_, _unc-54_)"
+  - rule: "Optional roman numeral suffix for linkage group (e.g. _dpy-5 I_)"
+  - rule: "Protein names: 3-letter uppercase or specific protein name, NOT italic (e.g. LET-37)"
+  - rule: "Allele names: 2 letters + number (e.g. hc17)"
+  - rule: "Temperature-sensitive alleles: suffix _ts (e.g. hc17_ts)"
+  - rule: "Wild type allele: + sign"
+  - rule: "Transgenes: NOT italicized (e.g. Ex[dpy-5p::GFP])"
+  - rule: "Strain names: 2-3 uppercase lab code + number (e.g. N2, CB112, MT2542)"
+
+# Balancers
+balancers:
+  canonical: [hT2, nT1, sT1, mIn1, eT1, qC1]
+  rules:
+    - "C. elegans balancers are translocation chromosomes"
+    - "Use format: +/hT2 or +/nT1 for heterozygotes"
+
+# Auto-detect keywords
+detect_keywords: ["C\\. elegans", Caenorhabditis, worm, nematode, "let-", "dpy-", "unc-", "egl-", N2, CGC, WormBase, WormBook]
+
+# Term mappings
+term_mappings:
+  - source: "nematode"
+    target: "C. elegans"
+  - source: "worm model"
+    target: "C. elegans"
+
+# Standard assays
+standard_assays:
+  - "lethality screen"
+  - "RNAi feeding"
+  - "microparticle bombardment"
+  - "CRISPR/Cas9 editing"
+  - "MosSCI insertion"
+  - "aging assay"
+  - "locomotion assay"
+  - "heat stress assay"
+
+# Life stages
+life_stages:
+  - embryo
+  - "L1 larva"
+  - "L2 larva"
+  - "L3 larva"
+  - "L4 larva"
+  - adult
+  - dauer
+  - "aging day 1 adult"
+  - "day 1 post-L4"
+
+# Reporting standards
+reporting:
+  rrid_required: true
+  rrid_types: [antibody, strain, "plasmid"]
+  key_resources_table: true
+  acknowledge_cgc: "Some strains were provided by the CGC, which is funded by NIH Office of Research Infrastructure Programs (P40 OD010440)."
+  acknowledge_wormbase: "Gene information from WormBase (wormbase.org)."
+
+# Voice rules
+voice:
+  introduction: "HIGH assertiveness. State the gap; state the question."
+  methods: "HIGHEST assertiveness. Detail strain, allele, temperature."
+  results: "HIGH assertiveness. State findings directly."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
+
+# Sex
+sex:
+  - hermaphrodite
+  - male

@@ -1,0 +1,75 @@
+# Mouse / Mammalian biology domain profile
+# Filename (without .yaml) is the domain key: "mouse-mammalian"
+# Sources: MGI Gene Nomenclature Guidelines (Sept 2024), ARRIVE 2.0, RRID:IMSR_JAX
+
+name: "Mouse / Mammalian biology"
+
+journals:
+  - Cell
+  - Nature
+  - Science
+  - "JCI - Journal of Clinical Investigation"
+  - "Nature Communications"
+  - "Cell Reports"
+
+# Species
+species:
+  first_mention: "Mus musculus"
+  subsequent: ["the mouse", "mice", "the animals"]
+  avoid: "the house mouse Mus musculus"
+
+# Strains — common inbred lines
+stocks:
+  format: "C57BL/6J"
+  rrid_prefix: "RRID:IMSR_JAX_"
+  common_strains: ["C57BL/6J", "BALB/cJ", "FVB/NJ", "CD-1", "129S1/SvImJ", "C3H/HeJ", "DBA/2J"]
+  description: "Jackson Laboratory (JAX) strain designations"
+
+# Nomenclature — official MGI rules
+nomenclature:
+  - rule: "Gene symbols italicized (e.g. _Brca1_, _Trp53_)"
+  - rule: "Protein symbols uppercase, NOT italicized (e.g. BRCA1, TRP53)"
+  - rule: "Gene symbol: first letter uppercase, rest lowercase (e.g. _Wt1_, _Plaur_)"
+  - rule: "Recessive phenotype symbols start lowercase (e.g. _w_)"
+  - rule: "Transgenes: NOT italicized, format Tg(promoter-gene)Line# (e.g. Tg(Drd2-EGFP)S118Gsat)"
+  - rule: "Knockout/knockin allele: _Gene<tm1Labcode>_ (e.g. _Brca1<tm1.1Mlg>_)"
+  - rule: "Chromosome designations: uppercase C, no period (Chr 15, not Chr.15)"
+  - rule: "Always specify sex of animals studied (male, female, or both)"
+  - rule: "Always report age (weeks/months) and weight where relevant"
+
+# Auto-detect keywords
+detect_keywords: [mouse, mice, "mus musculus", C57BL, BALB, FVB, JAX, "Jackson Laboratory", knockout, knockin, MGI]
+
+# Reporting standards — ARRIVE 2.0 is mandatory for vertebrate animal research
+reporting:
+  rrid_required: true
+  rrid_types: [antibody, "mouse strain", "cell line"]
+  key_resources_table: true
+  arrive2: true
+  arrive2_field: "biology/animal/mouse"
+  arrive2_reference: "Percie du Sert et al. 2020, PLOS Biology"
+  arrive2_essential_10:
+    - "Study design (groups compared, experimental unit)"
+    - "Sample size (exact n per group, total animals, a priori power calc)"
+    - "Inclusion and exclusion criteria (a priori, reported exclusions)"
+    - "Randomisation (method to generate sequence, confounders minimised)"
+    - "Blinding (who was aware of group allocation at each stage)"
+    - "Outcome measures (primary and secondary, hypothesis-testing primary)"
+    - "Statistical methods (test, software, assumption checks, multiple-testing correction)"
+    - "Experimental animals (species, strain and substrain, sex, age or developmental stage, weight, provenance, health/immune status, genetic modification)"
+    - "Experimental procedures (what/how/when/how often/where/why, acclimatisation)"
+    - "Results (summary/descriptive statistics with variability, effect size with CI)"
+  ethical_approval: "Required: IACUC or equivalent committee approval, with protocol number"
+  acknowledge_jax: "Mice were obtained from the Jackson Laboratory (RRID:IMSR_JAX)."
+
+# Voice rules
+voice:
+  introduction: "HIGH assertiveness. State the gap; state the question."
+  methods: "HIGHEST assertiveness. No hedging. Detail strain, sex, age, source."
+  results: "HIGH assertiveness. State findings directly with n, p, effect size, 95% CI."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
+
+# Sex canonical
+sex:
+  - female
+  - male

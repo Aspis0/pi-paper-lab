@@ -1,0 +1,481 @@
+# Generic biology lexicon — SHARED across all domains.
+# Contains ONLY entries that apply to ANY biology field:
+# AI-tells, fillers, hedging, voice, numbers, figures, sloppy patterns, claim strength.
+# Domain-specific entries (species, stocks, balancers, nomenclature) belong in
+# data/domains/<name>.yaml — never here.
+#
+# Use: loaded alongside a domain profile by src/domains.ts.
+
+# === Verbs accepted in scientific writing ===
+preferred_verbs:
+  action_physics_biology:
+    - measure
+    - quantify
+    - assess
+    - score
+    - determine
+    - estimate
+    - calculate
+    - compute
+  genetics_general:
+    - cross
+    - outcross
+    - recombine
+    - map
+    - localize
+    - integrate
+    - rescue
+  imaging_expression:
+    - image
+    - visualize
+    - inspect
+    - record
+    - mount
+  behavior_assay:
+    - monitor
+    - record
+    - count
+    - track
+  analysis:
+    - identify
+    - characterize
+    - compare
+    - contrast
+    - parse
+  reporting_results:
+    - find
+    - observe
+    - detect
+    - reveal
+    - show
+
+# === Verbs that are AI-tells or community-taboos ===
+avoided_verbs:
+  - "delve into"
+  - "delve"
+  - "navigate"
+  - "shed light on"
+  - "shed new light on"
+  - "unravel"
+  - "unravel the mysteries of"
+  - "leverage"
+  - "leverage the power of"
+  - "foster"
+  - "elucidate"
+  - "uncover the mysteries"
+  - "explore the complexities of"
+  - "explore the intricate"
+  - "tackle the challenge"
+  - "address the question"
+  - "revolutionize"
+  - "transform our understanding"
+  - "pave the way"
+  - "open new avenues"
+  - "drive innovation"
+  - "plays a crucial role in"
+  - "plays a key role in"
+  - "plays an essential role in"
+  - "plays a critical role in"
+  - "plays a vital role in"
+  - "play a crucial role in"
+  - "play a key role in"
+  - "play an essential role in"
+  - "plays a major role in"
+  - "plays a central role in"
+  - "plays an important role in"
+  - "play a major role in"
+  - "play a central role in"
+  - "play an important role in"
+  - "plays a significant role in"
+  - "play a significant role in"
+  - "is known to"
+  - "are known to"
+  - "has been shown to"
+  - "have been shown to"
+  - "has previously been shown to"
+  - "have previously been shown to"
+  - "has been well established that"
+  - "have been well established that"
+  - "it is well established that"
+  - "it is widely accepted that"
+  - "it is generally accepted that"
+  - "it is now clear that"
+  - "it has become clear that"
+
+# === Nouns that mark AI prose ===
+avoided_nouns:
+  - "intricacies"
+  - "intricate"
+  - "intricate network"
+  - "tapestry"
+  - "the multifaceted nature of"
+  - "multifaceted nature"
+  - "multifaceted"
+  - "multifaceted role"
+  - "holistic"
+  - "holistic approach"
+  - "landscape"
+  - "a deeper understanding"
+  - "complex interplay"
+  - "myriad of"
+  - "myriad"
+  - "burgeoning field"
+  - "exciting frontier"
+  - "realms of"
+  - "synergistic"
+  - "cutting-edge"
+  - "state-of-the-art"
+  - "novel insights"
+  - "novel approach"
+  - "novel therapeutic targets"
+  - "groundbreaking"
+  - "unprecedented"
+  - "revolutionary"
+  - "profound"
+  - "remarkable"
+  - "a deeper understanding of"
+  - "deeper understanding"
+  - "a better understanding of"
+  - "better understanding"
+  - "remain poorly understood"
+  - "remains poorly understood"
+  - "remain largely unknown"
+  - "remains largely unknown"
+  - "remain elusive"
+  - "remains elusive"
+  - "remains unclear"
+  - "are poorly defined"
+  - "is poorly defined"
+  - "a long-standing question"
+  - "long-standing question"
+  - "long-standing mystery"
+  - "unresolved question"
+  - "open question"
+  - "limited understanding"
+  - "our current understanding"
+  - "the molecular mechanisms underlying"
+  - "the underlying mechanisms"
+  - "the precise mechanisms"
+  - "the intricate mechanisms"
+  - "a myriad of"
+  - "a plethora of"
+  - "plethora"
+  - "an array of"
+  - "a suite of"
+  - "a host of"
+  - "a wealth of"
+
+# === Filler / bumper words — DELETE on sight ===
+filler_words:
+  adverbs_to_remove:
+    - "crucially"
+    - "notably"
+    - "importantly"
+    - "essentially"
+    - "fundamentally"
+    - "remarkably"
+    - "interestingly"
+    - "surprisingly"
+    - "literally"
+    - "very"
+    - "really"
+    - "quite"
+    - "rather"
+    - "somewhat"
+    - "indeed"
+    - "clearly"
+    - "obviously"
+    - "of course"
+    - "as expected"
+  phrase_openers_to_remove:
+    - "It is important to note that"
+    - "It is worth noting that"
+    - "It should be noted that"
+    - "Of note,"
+    - "It is interesting that"
+    - "Fascinatingly,"
+    - "Notably,"
+    - "In conclusion,"
+    - "To summarize,"
+    - "In summary,"
+    - "This paper aims to"
+    - "We believe"
+    - "We hypothesize that"
+    - "As mentioned earlier,"
+    - "As discussed above,"
+    - "As is well known,"
+    - "It has long been known that"
+    - "Historically,"
+    - "In recent years,"
+    - "With the advent of"
+    - "In the post-genomic era,"
+    - "In the era of"
+    - "Driven by the rapid development of"
+    - "Spurred by"
+    - "Motivated by"
+    - "Inspired by nature,"
+  phrase_connectors_to_rephrase:
+    "in order to": "to"
+    "due to the fact that": "because"
+    "in spite of the fact that": "although"
+    "with regard to": "for"
+    "in the event that": "if"
+    "a large number of": "many"
+    "the majority of": "most"
+    "at this point in time": "now"
+    "is able to": "can"
+
+# === Sentence-level tells ===
+sentence_tells:
+  overused_cleft:
+    - "It is ... that ..."
+    - "What is ... is ..."
+  ai_signature_openers:
+    - "Imagine a world where"
+    - "Picture this:"
+    - "Buckle up"
+    - "Let's dive in"
+    - "Let us delve"
+    - "Let's explore"
+    - "We are excited to"
+    - "We are thrilled to"
+    - "We're excited to present"
+    - "In today's rapidly evolving"
+  appositive_stack_overflow:
+    pattern: "robust, comprehensive, and systematic"
+    pattern_replacement: "systematic"
+
+# === Anti-intensifiers / AI-tell adjectives ===
+adjective_intensifiers_to_avoid:
+  - "crucial"
+  - "critical"
+  - "essential"
+  - "vital"
+  - "remarkable"
+  - "profound"
+  - "novel"
+  - "unprecedented"
+  - "pivotal"
+  - "groundbreaking"
+  - "innovative"
+
+# === Anti-self-promotion openers ===
+self_promotion_openers_to_remove:
+  - "for the first time"
+  - "to our knowledge"
+  - "novel"
+  - "groundbreaking"
+
+# === Numbers / statistics policy ===
+statistics:
+  p_value_format:
+    - "p<0.05"
+    - "p<0.01"
+    - "p<0.001"
+    - "p=0.013"
+    - "ns"
+  ci_format:
+    - "95% CI [a, b]"
+    - "99% CI [a, b]"
+  effect_size:
+    required_when: "every p-value reported"
+    types:
+      - "Cohen's d"
+      - "Hedges' g"
+      - "Pearson's r"
+      - "R²"
+      - "η²"
+  n_required:
+    body: "always (n=X per group, n=X replicates)"
+    figure_legend: "always"
+  multiple_testing:
+    methods:
+      - "Bonferroni"
+      - "Bonferroni-Holm"
+      - "Benjamini-Hochberg (FDR)"
+    mention_required_when: ">5 comparisons per figure"
+
+# === Hedging calibration ===
+hedging:
+  introduction:
+    assertiveness: "high"
+    allowed:
+      - "we hypothesized"
+      - "we predicted"
+      - "we asked whether"
+    avoided:
+      - "we speculated"
+      - "one might wonder"
+      - "it is tempting to speculate"
+  methods:
+    assertiveness: "highest"
+    no_hedging: true
+  results:
+    assertiveness: "high — state findings directly"
+    required_format:
+      - "We found that X."
+      - "X was reduced by Y% (n=Z, p=W)."
+      - "Of the N animals examined, M showed phenotype."
+    avoided:
+      - "Our results may suggest"
+      - "might indicate"
+      - "could potentially reflect"
+  discussion:
+    interpretation_paragraph: "moderate hedging"
+    speculation_paragraph_final: "explicit hedging allowed"
+    required_format:
+      - "These results are consistent with..."
+      - "We propose that..."
+      - "An alternative explanation is..."
+    avoided:
+      - "Our findings prove that..."
+      - "We demonstrate that... (unless truly demonstrated with replicates)"
+
+# === First person / voice ===
+voice:
+  introduction:
+    can_use: limited
+    preferred_pattern: "Here, we ..."
+    avoid_patterns:
+      - "We believe..."
+      - "We think..."
+      - "We feel..."
+  methods:
+    first_person_we: true
+    passive_ok: true
+  results:
+    first_person_we: true
+    recommended: true
+    passive_ok: false
+  discussion:
+    first_person_we: true
+    recommended: true
+  conclusion_optional: true
+
+# === Figure / table references ===
+figures:
+  reference_style:
+    - "Figure 1A shows..."
+    - "Figure 1B,C"
+    - "(Figure 1A)"
+    - "as shown in Figure 1"
+  avoid:
+    - "As can be seen in Figure 1"
+    - "From Figure 1, it can be seen that"
+    - "It is evident from Figure 1 that"
+    - "Looking at Figure 1, we can see"
+
+# === Citation style ===
+citations:
+  inline_format:
+    - "(Author, Year)"
+    - "Author et al. (Year)"
+    - "Author and Author (Year)"
+  when_no_citation_yet:
+    action: "mark [CITATION NEEDED: <topic>]"
+    never_invent: true
+
+# === Sloppy human writing patterns ===
+sloppy_patterns:
+  vague_quantifiers:
+    - "a few"
+    - "several"
+    - "many"
+    - "some"
+    - "a subset of"
+    - "the majority of"
+    - "a portion of"
+  vague_time:
+    - "shortly after"
+    - "after a while"
+    - "at some point"
+    - "in due course"
+    - "over time"
+  vague_location:
+    - "in the brain"
+    - "in the CNS"
+    - "throughout the animal"
+  causal_overclaim:
+    - "causes"
+    - "is responsible for"
+    - "drives"
+    - "is the key regulator of"
+    - "is essential for"
+    - "is indispensable for"
+    - "is solely responsible for"
+    - "is the major determinant of"
+    - "is the primary driver of"
+  correlation_causation_conflation:
+    - "regulates"
+    - "controls"
+    - "determines"
+    - "directs"
+    - "governs"
+    - "specifies"
+  passive_overuse:
+    - "was observed"
+    - "were seen"
+    - "was detected"
+    - "were found"
+    - "it was noted that"
+  hedge_overuse_in_results:
+    - "may suggest"
+    - "could indicate"
+    - "might reflect"
+    - "potentially"
+    - "possibly"
+    - "conceivably"
+
+# === Claim strength policy ===
+claim_strength:
+  grades:
+    strong_observation:
+      requires:
+        - "p < 0.01"
+        - "n >= 30 per group"
+        - ">= 3 biological replicates"
+        - "effect size reported"
+        - "95% CI reported"
+      allowed_verbs: ["show", "demonstrate", "establish", "prove"]
+    observation:
+      requires:
+        - "p < 0.05"
+        - "n >= 15 per group"
+        - ">= 2 biological replicates"
+      allowed_verbs: ["find", "observe", "report", "identify"]
+    preliminary:
+      requires:
+        - "p < 0.05"
+        - "n < 15 per group OR only 1 replicate"
+      allowed_verbs: ["observe tentatively", "report preliminary evidence"]
+      required_qualifier: "(preliminary; requires replication)"
+    speculative:
+      requires: []
+      allowed_verbs: ["hypothesize", "propose", "speculate"]
+      required_qualifier: "(speculative; no supporting data shown)"
+  overclaim_verbs_in_results:
+    - "demonstrate"
+    - "prove"
+    - "establish"
+    - "show definitively"
+    - "confirm"
+  underclaim_verbs_in_results:
+    - "might suggest"
+    - "could potentially"
+    - "may possibly"
+  error_reporting:
+    rule: "report SD for descriptive variability; SEM only for precision of mean estimate"
+    never: "SEM for error bars on individual data points (misleading)"
+
+# === AI-tell detection thresholds ===
+ai_tell_scoring:
+  weights:
+    avoided_verb_hit: 1.0
+    avoided_noun_hit: 1.0
+    filler_adverb_hit: 1.5
+    ai_opener_hit: 3.0
+    emdash_overuse_threshold: 2.0
+    sentence_length_uniformity: 1.0
+  thresholds:
+    safe_max: 2.0
+    caution_max: 5.0

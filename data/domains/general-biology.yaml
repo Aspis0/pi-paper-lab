@@ -1,0 +1,22 @@
+# General biology domain profile
+# Filename (without .yaml) is the domain key: "general-biology"
+# Minimal rules — apply when no specific domain is configured.
+
+name: "General biology"
+
+# No species, no stocks, no balancers, no nomenclature rules.
+# Only voice rules + reporting defaults.
+
+voice:
+  introduction: "HIGH assertiveness. State the gap; state the question."
+  methods: "HIGHEST assertiveness. No hedging. Plain description."
+  results: "HIGH assertiveness. State findings directly with n, p, effect size, 95% CI."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
+
+reporting:
+  rrid_required: false
+  rrid_types: []
+  key_resources_table: false
+
+# Empty detect_keywords — used as fallback when no other domain matches.
+detect_keywords: []

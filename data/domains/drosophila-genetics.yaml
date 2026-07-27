@@ -1,0 +1,112 @@
+# Drosophila genetics domain profile
+# Filename (without .yaml) is the domain key: "drosophila-genetics"
+# Every section is OPTIONAL. Omit → those rules don't apply.
+# Sources: FlyBase, BDSC, MGI cross-species, ARRIVE 2.0, MARCM literature.
+
+name: "Drosophila genetics"
+
+journals:
+  - eLife
+  - Genetics
+  - "G3 Genes|Genomes|Genetics"
+  - "PLOS Genetics"
+  - Development
+  - "Nature Methods"
+
+# Species conventions (Brenner, Greenspan Fly Pushing 2nd ed.)
+species:
+  first_mention: "Drosophila melanogaster"
+  subsequent: ["the fly", "Drosophila", "flies"]
+  avoid: "the fruit fly Drosophila melanogaster"
+
+# Stock reference — BDSC official format
+stocks:
+  format: "BDSC stock #91234"
+  rrid_prefix: "RRID:BDSC_"
+  description: "Bloomington Drosophila Stock Center (NIH P40OD018537)"
+
+# Genotype format — FlyBase convention
+genotype:
+  format: "y[1] w[1118]; +; P{y[+t7.7] w[+mC]=GAL4}attP2"
+  chromosome_order: "X;Y;2;3;4"
+  rules:
+    - "use sex chromosomes first (X/Y)"
+    - "use semicolons to separate chromosomes"
+    - "use + for wild-type allele"
+    - "use solidus / for homologous chromosomes"
+
+# Balancers — FlyBase canonical (NOT markers)
+balancers:
+  canonical: [FM7, FM7a, FM7h, CyO, SM1, SM6a, TM3, TM6B, TM6C, MKRS]
+  markers_NOT_balancers: [Sp, If, Sb, Hu, Tb]
+  warning: "Sp/If/Sb/Hu/Tb are MARKERS not balancers. Stocks are written 'Sp/CyO' (marker/balancer)."
+
+# Nomenclature rules
+nomenclature:
+  - find: "Gal4"
+    replace: "GAL4"
+    rule: "ALWAYS capitalize GAL4 (not Gal4)"
+  - rule: "Use promoter-GAL4 format (e.g. R57C10-GAL4)"
+  - rule: "UAS- prefix italicized in print"
+  - rule: "Gene symbols italic with first letter uppercase (e.g. w, br, rl)"
+  - rule: "Protein symbols uppercase, NOT italic (e.g. W, BR, RL)"
+
+# Key citations that must be cited correctly
+key_citations:
+  - term: "MARCM"
+    must_cite: "Lee and Luo, 1999, Neuron 22:451-461"
+    doi: "10.1016/s0896-6273(00)80701-1"
+    not: "the 2001 TINS review"
+  - term: "GAL4/UAS"
+    must_cite: "Brand and Perrimon, 1993"
+  - term: "FLP/FRT"
+    must_cite: "Golic and Lindquist, 1989; Xu and Rubin, 1993"
+
+# Life stages
+life_stages:
+  - embryo
+  - "first-instar larva (L1)"
+  - "second-instar larva (L2)"
+  - "third-instar larva (L3)"
+  - "wandering L3"
+  - "white prepupa"
+  - pupa
+  - "pharate adult"
+  - adult
+
+# Term mappings (auto-correct these in text)
+term_mappings:
+  - source: "neural stem cell"
+    target: "neuroblast"
+  - source: "neural stem cells"
+    target: "neuroblasts"
+  - source: "neural stem cell specification"
+    target: "neuroblast specification"
+  - source: "neural progenitor"
+    target: "neuroblast"
+  - source: "neural progenitors"
+    target: "neuroblasts"
+
+# Auto-detect keywords (for domain detection from text)
+detect_keywords: [drosophila, "D\\. melanogaster", GAL4, UAS, MARCM, neuroblast, balancer, BDSC, "FlyBase", "wandering L3", "first-instar"]
+
+# Reporting standards
+reporting:
+  rrid_required: true
+  rrid_types: [antibody, "fly stock", "cell line"]
+  key_resources_table: true
+  acknowledge_bdsc: "Stocks obtained from the Bloomington Drosophila Stock Center (NIH P40OD018537) were used in this study."
+
+# Voice rules per section
+voice:
+  introduction: "HIGH assertiveness. State the gap; state the question."
+  methods: "HIGHEST assertiveness. No hedging."
+  results: "HIGH assertiveness. State findings directly."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
+
+# Sex canonical names
+sex:
+  - female
+  - male
+  - "virgin female"
+  - "aged virgin female"

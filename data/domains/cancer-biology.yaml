@@ -1,0 +1,79 @@
+# Cancer biology domain profile
+# Filename (without .yaml) is the domain key: "cancer-biology"
+# Sources: MIQE, RRID, ICMJE, cancer cell line authentication guidelines
+
+name: "Cancer biology"
+
+journals:
+  - "Cancer Cell"
+  - Cell
+  - Nature
+  - "Cancer Research"
+  - "JCO - Journal of Clinical Oncology"
+  - "Lancet Oncology"
+  - "Nature Cancer"
+
+# Cancer papers may use multiple species (mouse xenografts, human cell lines, patient samples)
+# species is intentionally absent — do not force a single species.
+
+# Cell lines — authentication is critical in cancer biology
+stocks:
+  format: "MCF-7"
+  rrid_prefix: "RRID:CVCL_"
+  rrid_source: "Cellosaurus"
+  rules:
+    - "Always authenticate cell lines (STR profiling)"
+    - "Test for mycoplasma contamination"
+    - "Report passage number"
+    - "Include RRID from Cellosaurus"
+
+# Nomenclature
+nomenclature:
+  - rule: "Cell line names: hyphenated, no italics (e.g. MCF-7, A549, HCT116, HeLa)"
+  - rule: "Human gene symbols: UPPERCASE, italicized in print (e.g. _BRCA1_, _TP53_) when referring to gene"
+  - rule: "Human protein symbols: UPPERCASE, NOT italicized (e.g. BRCA1, TP53)"
+  - rule: "Mouse gene symbols: italic with first letter uppercase (e.g. _Brca1_)"
+  - rule: "Drug concentrations: μM, nM (NOT uM)"
+  - rule: "EC50/IC50/GI50 reported with 95% CI"
+  - rule: "Hazard ratios: HR with 95% CI, log-rank p-value for KM curves"
+  - rule: "TNM staging for patient samples where applicable"
+
+# Standard assays
+standard_assays:
+  - "cell viability assay (MTT, CellTiter-Glo)"
+  - "xenograft tumor growth"
+  - "soft agar colony formation"
+  - "scratch/wound healing assay"
+  - "transwell invasion/migration"
+  - "flow cytometry"
+  - "Kaplan-Meier survival analysis"
+  - "Cox proportional hazards regression"
+  - "STR profiling (cell line authentication)"
+  - "mycoplasma testing"
+
+# Auto-detect keywords
+detect_keywords: [cancer, tumor, tumour, xenograft, oncogene, metastasis, "cell line", "cell viability", MCF-7, A549, HeLa, HCT116, "Kaplan-Meier", "hazard ratio", IC50, EC50, GI50, STR, mycoplasma]
+
+# Term mappings
+term_mappings:
+  - source: "tumor cell"
+    target: "cancer cell"
+  - source: "cancer cell line"
+    target: "cancer cell line"
+
+# Reporting standards
+reporting:
+  rrid_required: true
+  rrid_types: [antibody, "cell line", drug]
+  key_resources_table: true
+  miqe: true
+  miqe_field: "biology/qpcr"
+  miqe_required: true
+  arrive2: false  # not applicable unless using animal models
+
+# Voice rules
+voice:
+  introduction: "HIGH assertiveness. State the clinical/significance gap."
+  methods: "HIGHEST assertiveness. Detail authentication, passage numbers, replicates."
+  results: "HIGH assertiveness. State findings with n, p, effect size, 95% CI."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
