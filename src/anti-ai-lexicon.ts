@@ -136,6 +136,68 @@ export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
   const raw = readFileSync(path, "utf8");
   const data = yaml.load(raw) as Record<string, any>;
 
+  // Load domain profile if specified — merges domain-specific fields.
+  let domainData: Record<string, any> = {};
+  if (domainKey) {
+    const domainPath = join(rootDir, "data", "domains", `${domainKey}.yaml`);
+    try {
+      domainData = (yaml.load(readFileSync(domainPath, "utf8")) as Record<string, any>) ?? {};
+    } catch {
+      // Domain file not found — use empty defaults
+      domainData = {};
+    }
+  }
+
+  // Normalize domain YAML (new schema) → legacy conventions structure
+  // so the rest of parseLexicon works unchanged.
+  if (domainData.species || domainData.stocks || domainData.balancers || domainData.term_mappings) {
+    data.conventions = data.conventions ?? {};
+    if (domainData.species) {
+      data.conventions.species_first_mention = Array.isArray(domainData.species.first_mention)
+        ? { "0": domainData.species.first_mention[0] }
+        : domainData.species.first_mention;
+      data.conventions.species_subsequent = domainData.species.subsequent ?? [];
+    }
+    if (domainData.stocks) {
+      data.conventions.stock_reference = {
+        format: domainData.stocks.format,
+        alternatives: domainData.stocks.rules ?? [],
+      };
+    }
+    if (domainData.genotype) {
+      data.conventions.genotype_notation = {
+        style: domainData.genotype.format,
+        rules: domainData.genotype.rules ?? [],
+      };
+    }
+    if (domainData.balancers) {
+      data.conventions.balancer_notation = {
+        canonical: domainData.balancers.canonical ?? [],
+        markers_paired_with_balancers_NOT_balancers_themselves: domainData.balancers.not_markers ?? [],
+        note: domainData.balancers.warning,
+      };
+    }
+    if (domainData.life_stages) {
+      data.conventions.fly_life_stage_terms = domainData.life_stages;
+    }
+    if (domainData.sex) {
+      data.conventions.sex_canonical = domainData.sex;
+    }
+    if (domainData.term_mappings) {
+      data.conventions.domain_term_mappings = domainData.term_mappings;
+    }
+    if (domainData.standard_assays) {
+      data.conventions.standard_assays = domainData.standard_assays;
+    }
+    if (domainData.nomenclature) {
+      data.conventions.transgene_naming = {
+        gal4_example: "",
+        uas_example: "",
+        rules: (domainData.nomenclature as any[]).map(n => typeof n === "string" ? n : n.rule ?? ""),
+      };
+    }
+  }
+
   // --- preferred_verbs: list of strings (sub-keys flattened) ---
   const preferredVerbsRaw = data.preferred_verbs ?? {};
   let preferredVerbs: string[] = [];
@@ -183,6 +245,7 @@ export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
   // but behave identically to opener removal at write-time.
   const phraseOpeners = [
     ...phraseOpenersRaw,
+    ...arr(data.self_promotion_openers_to_remove),
     ...arr(conventions.self_promotion_openers_to_remove),
   ];
   const speciesMent = conventions.species_first_mention ?? {};

@@ -10,7 +10,7 @@ import { detectSloppy } from "../src/sloppy-detector.ts";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
-const lex = loadLexicon(ROOT);
+const lex = loadLexicon(ROOT, "drosophila-genetics");
 
 const assert = (cond: unknown, msg: string): void => {
   if (!cond) {
@@ -215,22 +215,32 @@ assert(
   `Domain-term mappings loaded (got ${lex.domain.domainTermMappings.length})`,
 );
 
-// --- ARRIVE essentials expanded ---
-const arrive = lex.reportingStandards.arrive2Essentials.missingInMethodsIfAbsent;
-assert(arrive.length >= 8, `ARRIVE essentials ≥8 (got ${arrive.length})`);
+// --- ARRIVE essentials expanded (mouse domain has ARRIVE 2.0) ---
+const mouseLex = loadLexicon(ROOT, "mouse-mammalian");
+// ARRIVE is now in domain reporting; check via the domain loader
+import { discoverDomains, getDomain } from "../src/domains.ts";
+const mouseDomain = getDomain(ROOT, "mouse-mammalian");
 assert(
-  arrive.some((s) => /randomisation/i.test(s)),
+  mouseDomain?.reporting?.arrive2 === true,
+  "Mouse domain has ARRIVE 2.0 enabled",
+);
+assert(
+  (mouseDomain?.reporting?.arrive2_essential_10?.length ?? 0) >= 8,
+  `ARRIVE essentials ≥8 in mouse domain (got ${mouseDomain?.reporting?.arrive2_essential_10?.length ?? 0})`,
+);
+assert(
+  mouseDomain?.reporting?.arrive2_essential_10?.some((s) => /randomisation/i.test(s)) ?? false,
   "ARRIVE essentials: Randomisation present",
 );
 assert(
-  arrive.some((s) => /blinding/i.test(s)),
+  mouseDomain?.reporting?.arrive2_essential_10?.some((s) => /blinding/i.test(s)) ?? false,
   "ARRIVE essentials: Blinding present",
 );
 
-// --- MARCM citation is the primary paper ---
-const tools = lex.domain.standardToolsFullMention;
+// --- MARCM citation is the primary paper (Drosophila-specific) ---
+const drosoDomain = getDomain(ROOT, "drosophila-genetics");
 assert(
-  tools.some((t) => /Lee and Luo,?\s*1999/i.test(t)),
+  drosoDomain?.key_citations?.some((c) => /Lee and Luo.*1999/i.test(c.must_cite ?? "")) ?? false,
   "MARCM citation is Lee & Luo 1999 (primary), not 2001 (review)",
 );
 

@@ -135,11 +135,18 @@ export function discoverDomains(root: string): DomainProfile[] {
 
 // === Auto-detect domain from text ===
 // Scores each domain's detect_keywords against the text. Highest score wins.
-// If no keywords match, returns "general-biology".
-export function detectDomain(text: string, domains: DomainProfile[]): string {
-  if (!text || domains.length === 0) return "general-biology";
+// If no keywords match, returns the first domain with empty detect_keywords
+// (fallback profile), or the first loaded domain if none.
+export function detectDomain(text: string, domains: DomainProfile[]): string | null {
+  if (!text || domains.length === 0) return null;
 
-  let best = "general-biology";
+  // Find the fallback domain: the first one with empty/missing detect_keywords.
+  // If none exists, fall back to the first loaded domain.
+  const fallback = domains.find(d => !d.detect_keywords || d.detect_keywords.length === 0)
+    ?? domains[0];
+  const fallbackKey = fallback.key;
+
+  let best: string | null = null;
   let bestScore = 0;
 
   for (const d of domains) {
@@ -153,6 +160,7 @@ export function detectDomain(text: string, domains: DomainProfile[]): string {
         if (re.test(text)) score++;
       } catch {
         // Invalid regex — skip this keyword
+        console.error(`[domains] Invalid regex in detect_keywords for "${d.key}": ${kw}`);
       }
     }
 
@@ -162,7 +170,7 @@ export function detectDomain(text: string, domains: DomainProfile[]): string {
     }
   }
 
-  return best;
+  return best ?? fallbackKey;
 }
 
 // === Get a specific domain profile by key ===
