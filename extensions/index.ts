@@ -12,7 +12,7 @@ import { loadLexicon } from "../src/anti-ai-lexicon.ts";
 import { buildSystemInjection } from "../src/system-injection.ts";
 import { silentRewrite } from "../src/anti-ai-lexicon.ts";
 import { registerTools } from "../src/tools.ts";
-import { pipelineCite, pipelineRewrite, generateWord } from "../src/pipeline.ts";
+import { pipelineCite, pipelineRewrite, pipelineWrite, generateWord } from "../src/pipeline.ts";
 import { paperLabConfigCommand } from "../src/config.ts";
 import {
   citeBibliographyCommand,
@@ -100,6 +100,18 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       await pipelineRewrite(target, instructions, pi);
+    },
+  });
+
+  pi.registerCommand("paper-write", {
+    description: "Generate new paper text from a description, then rewrite + cite + Word. Usage: /paper-write <what to write>",
+    handler: async (args, ctx) => {
+      const description = args.trim().replace(/^["']|["']$/g, "");
+      if (!description) {
+        ctx.ui.notify("Usage: /paper-write <description of what to write>", "warning");
+        return;
+      }
+      await pipelineWrite(description, pi);
     },
   });
 

@@ -199,6 +199,40 @@ export async function pipelineRewrite(
   pi.sendUserMessage(`${header}${flaggedInfo}\n\n${prompt}`, { deliverAs: "followUp" });
 }
 
+// === Pipeline 3: /paper-write ===
+// User describes what to write → LLM generates draft → AI check → cite → finalize
+export async function pipelineWrite(
+  description: string,
+  pi: ExtensionAPI,
+): Promise<void> {
+  const outPath = join(homedir(), "Desktop", "paper-write-output.md");
+
+  const prompt = [
+    `Write new text for a Drosophila genetics paper based on this description:`,
+    ``,
+    `"${description}"`,
+    ``,
+    `Follow the Drosophila genetics voice rules (already in your system prompt):`,
+    `- First mention: Drosophila melanogaster. Then: the fly, Drosophila, flies.`,
+    `- Neuroblast, not "neural stem cell". GAL4, not Gal4.`,
+    `- MARCM → Lee and Luo, 1999, Neuron 22:451-461.`,
+    `- Reporting: n=X per group, statistical test, p-value, effect size, 95% CI.`,
+    `- No AI-tells: no "delve", "leverage", "elucidate", "crucially", "notably".`,
+    `- Paragraphs of 3-6 sentences. Vary sentence length.`,
+    ``,
+    `Do these steps ALL IN ONE TURN:`,
+    ``,
+    `STEP 1 — WRITE: Write the text to ${outPath.replace(/\\/g, "/")}. Make it sound human, not AI-generated.`,
+    `STEP 2 — AI CHECK: Call ai_detect_statistical on your text. If score >40%, rewrite flagged sentences. Re-test. Max 3 rounds.`,
+    `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](doi:10.xxxx). Update ${outPath.replace(/\\/g, "/")}.`,
+    `STEP 4 — FINALIZE: Run this bash command:`,
+    `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${outPath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
+    `STEP 5 — REPORT: Tell the user the .docx path and the AI score. Do NOT read the .docx (binary).`,
+  ].join("\n");
+
+  pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+}
+
 // === Build the LLM cite-mark prompt ===
 function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean): string {
   const finalizeCmd = `node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${filePath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`;
