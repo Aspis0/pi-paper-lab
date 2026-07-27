@@ -153,88 +153,33 @@ export async function pipelineRewrite(
 
 // === Build the LLM cite-mark prompt ===
 function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean): string {
-  const baseSteps = [
-    `CITE-MARK: Read every sentence. Identify ALL claims that need a citation.`,
-    `   A claim needs a citation if it states a fact, definition, prior finding,`,
-    `   statistical result, or technique description. Mark each with [CITE:topic_description].`,
-    `   The number of claims depends on text length — typically one per factual sentence.`,
-    `   Do NOT under-cite. Do NOT mark: opinions, your own study results, section headers.`,
-    ``,
-    `BATCH SEARCH: For EACH [CITE:topic], call the find_citation tool.`,
-    `   Call them in parallel (batch) when possible. Pick the best candidate`,
-    `   (prefer primary research papers, not reviews or figure captions).`,
-    `   Use crossref_lookup to verify the DOI gives the right paper.`,
-    ``,
-    `ASSIGN: Replace each [CITE:topic] with [N](doi:10.xxxx).`,
-    `   For DOIs with special chars (parentheses), use angle brackets:`,
-    `   [N](<doi:10.1016/s0896-6273(00)80701-1>)`,
-    `   Number citations sequentially [1], [2], [3]...`,
-    ``,
-    `FINALIZE: After writing the resolved .md with [N](doi:...) markers, call finalizeDoc via bash:`,
-    `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${filePath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
-    `   finalizeDoc does EVERYTHING automatically:`,
-    `   - strips any old References section (idempotent, safe to re-run)`,
-    `   - looks up each DOI on CrossRef → builds Vancouver citations`,
-    `   - strips (doi:...) from text, makes [N] superscript with <sup>[N]</sup>`,
-    `   - appends References section at the end (DOI only there, never in text)`,
-    `   - creates .docx with --force (overwrites old file)`,
-    `   You do NOT need to run docx create or generate bibliography yourself.`,
-    `   Do NOT read or cat the .docx file — it's binary.`,
-    ``,
-    `REPORT: Tell the user the path to the .docx file.`,
-  ];
+  const finalizeCmd = `node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${filePath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`;
 
-  if (includeRewrite) {
-    const rewriteSteps = [
-      `REWRITE + AI DETECTION LOOP:`,
-      `   a) Rewrite the entire draft for human scientific voice. This is a Drosophila genetics paper.`,
-      `      Rewrite for clarity, flow, and natural variation — NOT just search-and-replace specific phrases.`,
-      `      ${rewriteInstructions ? `Additional instructions: ${rewriteInstructions}` : ""}`,
-      `   b) Call the ai_detect_statistical tool on your rewritten text. This gives you an AI score (0-100%).`,
-      `   c) Call the anti_ai_score tool on your rewritten text. This flags specific AI-tell sentences.`,
-      `   d) If AI score > 40% OR there are flagged sentences: rewrite those sentences to be more human.`,
-      `      Vary sentence structure. Use concrete specifics. Cut filler. Restructure paragraphs.`,
-      `   e) Re-test: call ai_detect_statistical again on the new version.`,
-      `   f) REPEAT steps d-e until AI score < 40% or you have done 3 iterations.`,
-      `   g) Write the final rewritten draft to ${filePath.replace(/\.md$/, ".rewritten.md")}.`,
-      `      This file already exists (pre-filled by the silent-rewrite pass). Overwrite it with your improved version.`,
-      `   h) IMPORTANT: when you reach the FINALIZE step, pass THIS rewritten file path`,
-      `   Report the initial and final AI scores to the user.`,
-      ``,
-    ];
-    const allSteps = [...rewriteSteps, ...baseSteps];
-    const numbered = allSteps.map((s, i) => `${i + 1}. ${s}`);
-    return [
-      `I need you to rewrite and add citations to this paper draft: ${filePath}`,
-      ``,
-      `Here is the draft text:`,
-      `---`,
-      text,
-      `---`,
-      ``,
-      `Do the following ${allSteps.length} steps ALL IN ONE TURN. Do NOT stop between steps. Do NOT ask for confirmation.`,
-      ``,
-      ...numbered,
-      ``,
-      `Start now with step 1 (rewrite + AI detection loop). Then proceed through ALL steps. Do NOT skip any step.`,
-    ].join("\n");
-  } else {
-    const numbered = baseSteps.map((s, i) => `${i + 1}. ${s}`);
-    return [
-      `I need you to add citations to this paper draft: ${filePath}`,
-      ``,
-      `Here is the draft text:`,
-      `---`,
-      text,
-      `---`,
-      ``,
-      `Do the following ${baseSteps.length} steps ALL IN ONE TURN. Do NOT stop between steps. Do NOT ask for confirmation.`,
-      ``,
-      ...numbered,
-      ``,
-      `Start now with step 1 (cite-mark). Then proceed through ALL steps. Do NOT skip any step.`,
-    ].join("\n");
-  }
+  const rewriteBlock = includeRewrite
+    ? [`STEP 1 — REWRITE + AI CHECK:`,
+       `Rewrite the draft for human scientific voice (Drosophila genetics paper). ${rewriteInstructions ? "Extra: " + rewriteInstructions : ""}`,
+       `Call ai_detect_statistical on your rewrite. If score >40%, rewrite the flagged sentences and re-test. Max 3 rounds.`,
+       `Write the result to ${filePath.replace(/\.md$/, ".rewritten.md")}. Report initial→final AI score.`,
+       ``].join("\n")
+    : "";
+
+  const startStep = includeRewrite ? 2 : 1;
+
+  return [
+    `Paper draft: ${filePath}`,
+    ``,
+    `---`,
+    text,
+    `---`,
+    ``,
+    rewriteBlock,
+    `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch parallel). Assign [N](doi:10.xxxx) sequentially. Write the resolved file to ${filePath}.`,
+    `STEP ${startStep + 1} — FINALIZE: Run this bash command (it does bibliography + superscript + .docx automatically):`,
+    `   ${finalizeCmd}`,
+    `STEP ${startStep + 2} — REPORT: Tell the user the .docx path. Do NOT read the .docx (binary).`,
+    ``,
+    `Do ALL steps in ONE turn. Do not stop between steps.`,
+  ].filter(Boolean).join("\n");
 }
 
 // === finalizeDoc: ONE function that does everything ===
