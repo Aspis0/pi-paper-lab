@@ -130,8 +130,9 @@ const obj = (v: unknown): Record<string, string> => {
   return {};
 };
 
-export function loadLexicon(rootDir: string): Lexicon {
-  const path = join(rootDir, "data", "drosophila-lexicon.yaml");
+export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
+  // Load shared lexicon (AI-tells, fillers, hedging, voice, numbers, sloppy patterns).
+  const path = join(rootDir, "data", "lexicon-common.yaml");
   const raw = readFileSync(path, "utf8");
   const data = yaml.load(raw) as Record<string, any>;
 
