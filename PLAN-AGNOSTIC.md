@@ -1,465 +1,362 @@
 # PLAN: Make pi-paper-lab Domain-Agnostic
 
-> **Goal**: Transform pi-paper-lab from Drosophila-specific to domain-agnostic biology paper writing tool.
-> Supports: Drosophila, Mouse/Mammalian, Cancer, Neuroscience, C. elegans, General/Custom.
-> **Executor**: Another agent will implement this plan. Each step is self-contained and verifiable.
+> **Goal**: pi-paper-lab works for ANY biology field. No hardcoded domains.
+> Domains are discovered at runtime by scanning `data/domains/*.yaml`.
+> Drop a YAML file → new domain. Zero code changes.
+> **Executor**: Another agent will implement this plan.
 
 ---
 
-## Audit: What's already agnostic (NO CHANGES NEEDED)
+## Core principle: DATA-DRIVEN, NEVER HARDCODED
 
-| File | Status | Notes |
-|---|---|---|
-| `src/statistical-ai-detector.ts` | ✅ agnostic | 7 statistical features, no domain logic |
-| `src/ai-detector.ts` | ✅ agnostic | Copyleaks API + local fallback |
-| `src/serper-scholar.ts` | ✅ agnostic | Serper API client |
-| `src/crossref.ts` | ✅ agnostic | CrossRef API + normalizeWork |
-| `src/citations.ts` | ✅ agnostic | Citation parsing, Vancouver bibliography |
-| `src/cite-verify.ts` | ✅ agnostic | Claim verification prompts |
-| `src/config.ts` | ✅ agnostic | API key management |
-| `src/word-builder.ts` | ✅ agnostic | Markdown → docx |
-| `src/footnote-injector.ts` | ✅ agnostic | Footnote placeholder |
-| `src/pipeline.ts` | ✅ agnostic logic | Prompts have minor Drosophila refs (Step 3) |
-| `src/imrad.ts` | ✅ mostly agnostic | Checks n, p-values, CIs — universal |
+- NO domain list in code. NO `if (domain === "X")`.
+- `/paper-lab` reads `data/domains/*.yaml` → shows whatever exists.
+- Auto-detect reads ALL domain profiles → matches text against each.
+- Adding a domain = creating one YAML file. That's it.
+
+---
+
+## Audit: What's already agnostic (NO CHANGES)
+
+| File | Status |
+|---|---|
+| `src/statistical-ai-detector.ts` | ✅ 7 features, zero domain logic |
+| `src/ai-detector.ts` | ✅ Copyleaks + local fallback |
+| `src/serper-scholar.ts` | ✅ Serper API |
+| `src/crossref.ts` | ✅ CrossRef API |
+| `src/citations.ts` | ✅ Vancouver bibliography |
+| `src/cite-verify.ts` | ✅ Claim verification |
+| `src/config.ts` | ✅ API keys (add `domain` field — Step 4) |
+| `src/word-builder.ts` | ✅ Markdown → docx |
+| `src/pipeline.ts` | ✅ Logic agnostic (prompts need minor fix — Step 5) |
+| `src/imrad.ts` | ✅ Checks n, p, CI — universal |
 
 ## Audit: What's Drosophila-specific (MUST CHANGE)
 
-| File | Issue | Lines |
-|---|---|---|
-| `src/system-injection.ts` | Hardcoded Drosophila voice, species, balancers, GAL4, MARCM, journals | ~150 lines, almost entirely Drosophila |
-| `data/drosophila-lexicon.yaml` | `domain:` section, `domain_term_mappings`, species, balancers, stock format | Lines 270-350+ |
-| `corpus-sources.md` | All papers are Drosophila | Entire file |
-| `src/tools.ts` | Two tool descriptions say "Drosophila" | Lines 85, 110 |
-| `src/anti-ai-lexicon.ts` | Lexicon type has Drosophila-specific fields (balancers, lifeStages, etc.) | Lines 19-30 |
-| `src/claim-strength.ts` | References `drosophila-lexicon.yaml` in comment | Line 3 |
+| File | Issue |
+|---|---|
+| `src/system-injection.ts` | ~150 lines hardcoded Drosophila voice |
+| `data/drosophila-lexicon.yaml` | `domain:` section, term mappings, balancers |
+| `corpus-sources.md` | Only Drosophila papers |
+| `src/tools.ts` | 2 descriptions say "Drosophila" |
+| `src/anti-ai-lexicon.ts` | Lexicon type has Drosophila-specific fields |
 
 ---
 
-## Architecture: Domain Profile System
+## Domain Profile YAML Schema
 
-```
-data/
-├── lexicon-common.yaml          # AI-tells, fillers, hedging — SHARED across all domains
-├── domains/
-│   ├── drosophila.yaml          # Drosophila-specific: species, GAL4, MARCM, balancers, neuroblast
-│   ├── mouse.yaml              # Mouse: M. musculus, strains (C57BL/6), alleles, transgenes
-│   ├── cancer.yaml             # Cancer: cell lines, xenografts, IC50, Kaplan-Meier, HR
-│   ├── neuroscience.yaml       # Neuro: electrodes, recording, brain regions, neurons
-│   ├── c-elegans.yaml          # C. elegans: strains, alleles, balancers (hT2, nT1)
-│   └── general.yaml            # Generic biology: minimal rules, no species-specific
-└── (remove drosophila-lexicon.yaml — split into common + domains/drosophila.yaml)
-```
-
-### Domain profile YAML schema (each domain file):
+Each file in `data/domains/` is ONE domain. The filename IS the domain key.
 
 ```yaml
-# data/domains/drosophila.yaml
-name: "Drosophila genetics"
-label: "drosophila-genetics"
-journals:
-  - "eLife"
-  - "Genetics"
-  - "G3"
-  - "PLOS Genetics"
-  - "Development"
-  - "Nature Methods"
+# data/domains/drosophila-genetics.yaml
+# The filename (without .yaml) is the domain key: "drosophila-genetics"
+# Everything below is OPTIONAL. Omit a section → those rules don't apply.
 
+name: "Drosophila genetics"           # display name
+journals:                              # relevant journals
+  - eLife
+  - Genetics
+  - "PLOS Genetics"
+
+# Species conventions (omit if not species-specific, e.g. cancer)
 species:
   first_mention: "Drosophila melanogaster"
   subsequent: ["the fly", "Drosophila", "flies"]
-  redundant_form: "the fruit fly Drosophila melanogaster"  # NEVER use this
+  avoid: "the fruit fly Drosophila melanogaster"
 
+# Stock/strain conventions (omit if not applicable)
 stocks:
   format: "BDSC stock #91234"
   rrid_prefix: "RRID:BDSC_"
-  description: "Bloomington Drosophila Stock Center"
 
+# Genotype format (omit if not applicable)
 genotype:
   format: "y[1] w[1118]; +; P{GAL4}attP2"
   chromosome_order: "X;Y;2;3;4"
-  solidus: true  # use / for homologous chromosomes
 
+# Balancers (omit if not applicable)
 balancers:
-  canonical: ["FM7", "FM7a", "FM7h", "CyO", "SM1", "TM6B"]
-  warning: "Do not confuse with MARKERS like Sp, If, Sb, Hu, Tb"
+  canonical: [FM7, FM7a, CyO, SM1, TM6B]
+  not_markers: [Sp, If, Sb, Hu, Tb]
 
+# Nomenclature rules (each is a find→replace or a rule string)
 nomenclature:
-  - rule: "ALWAYS capitalize GAL4 (not Gal4)"
-    pattern: "Gal4"
-    replacement: "GAL4"
+  - find: "Gal4"
+    replace: "GAL4"
+    rule: "ALWAYS capitalize GAL4"
   - rule: "Use promoter-GAL4 format (e.g. R57C10-GAL4)"
 
+# Key citations that must be cited correctly (omit if none)
 key_citations:
   - term: "MARCM"
-    citation: "Lee and Luo, 1999, Neuron 22:451-461"
+    must_cite: "Lee and Luo, 1999, Neuron 22:451-461"
     doi: "10.1016/s0896-6273(00)80701-1"
-    warning: "NOT the 2001 TINS review"
+    not: "the 2001 TINS review"
 
-life_stages:
-  - "embryo"
-  - "first-instar larva (L1)"
-  - "second-instar larva (L2)"
-  - "third-instar larva (L3)"
-  - "wandering L3"
+# Life stages (omit if not applicable)
+life_stages: [embryo, "L1", "L2", "L3", "wandering L3"]
 
-domain_term_mappings:
+# Term mappings (auto-correct these in text)
+term_mappings:
   - source: "neural stem cell"
     target: "neuroblast"
   - source: "neural stem cells"
     target: "neuroblasts"
-  - source: "neural progenitor"
-    target: "neuroblast"
 
+# Auto-detect keywords (used to guess the domain from text)
+detect_keywords: [drosophila, flies, GAL4, UAS, MARCM, neuroblast, balancer]
+
+# Reporting standards
 reporting:
   rrid_required: true
-  rrid_types: ["antibody", "fly stock", "cell line"]
+  rrid_types: [antibody, "fly stock", "cell line"]
   key_resources_table: true
 
-voice_rules:
+# Voice rules per section
+voice:
   introduction: "HIGH assertiveness. State the gap; state the question."
-  methods: "HIGHEST assertiveness. No hedging. Plain description."
-  results: "HIGH assertiveness. State findings directly with n, p, effect size."
-  discussion: "Moderate hedging. Speculation only in final paragraph with hedged language."
+  methods: "HIGHEST assertiveness. No hedging."
+  results: "HIGH assertiveness. State findings directly."
+  discussion: "Moderate hedging. Speculation only in final paragraph."
 ```
 
+### Example: minimal domain (cancer)
 ```yaml
-# data/domains/mouse.yaml
-name: "Mouse / Mammalian biology"
-label: "mouse-mammalian"
-journals:
-  - "Cell"
-  - "Nature"
-  - "Science"
-  - "JCI"
-  - "Nature Communications"
-  - "Cell Reports"
-
-species:
-  first_mention: "Mus musculus"
-  subsequent: ["the mouse", "mice", "animals"]
-  redundant_form: "the house mouse Mus musculus"
-
-strains:
-  format: "C57BL/6J"
-  rrid_prefix: "RRID:IMSR_"
-  common: ["C57BL/6J", "BALB/c", "FVB/N", "CD1", "129Sv"]
-
-nomenclature:
-  - rule: "Gene names italicized (e.g. Brca1, Trp53)"
-  - rule: "Protein names: BRCA1, TRP53 (uppercase, no italics)"
-  - rule: "Transgene format: Tg(promoter-gene)Line#"
-
-domain_term_mappings: []  # no special mappings needed
-
-reporting:
-  rrid_required: true
-  rrid_types: ["antibody", "mouse strain", "cell line"]
-  key_resources_table: true
-  arrive2: true  # ARRIVE 2.0 guidelines for animal studies
-
-voice_rules:
-  introduction: "HIGH assertiveness."
-  methods: "HIGHEST assertiveness."
-  results: "HIGH assertiveness."
-  discussion: "Moderate hedging."
-```
-
-```yaml
-# data/domains/cancer.yaml
+# data/domains/cancer-biology.yaml
 name: "Cancer biology"
-label: "cancer-biology"
-journals:
-  - "Cancer Cell"
-  - "Cell"
-  - "Nature"
-  - "Cancer Research"
-  - "JCO"
-  - "Lancet Oncology"
-
-species:
-  first_mention: null  # cancer papers may not have a single species
-  subsequent: []
-
+journals: ["Cancer Cell", "Cancer Research", "Lancet Oncology"]
 nomenclature:
-  - rule: "Gene names: BRCA1, TP53 (uppercase, human)"
   - rule: "Cell lines: MCF-7, A549, HCT116 (hyphen, no italics)"
   - rule: "Drug concentrations: μM, nM (not uM)"
-
-domain_term_mappings: []
-
+detect_keywords: [cancer, tumor, xenograft, oncogene, metastasis, "cell line"]
 reporting:
   rrid_required: true
-  rrid_types: ["antibody", "cell line", "drug"]
-  key_resources_table: true
-
-voice_rules:
+  rrid_types: [antibody, "cell line", drug]
+voice:
   introduction: "HIGH assertiveness."
-  methods: "HIGHEST assertiveness."
   results: "HIGH assertiveness."
-  discussion: "Moderate hedging."
 ```
 
+### Example: truly minimal (user creates new domain)
 ```yaml
-# data/domains/general.yaml
-name: "General biology"
-label: "general-biology"
-journals: []  # no specific journals
-
-species:
-  first_mention: null
-  subsequent: []
-
-nomenclature: []
-domain_term_mappings: []
-balancers: null
-stocks: null
-genotype: null
-key_citations: []
-
-reporting:
-  rrid_required: false
-  rrid_types: []
-  key_resources_table: false
-
-voice_rules:
-  introduction: "HIGH assertiveness."
-  methods: "HIGHEST assertiveness."
-  results: "HIGH assertiveness."
-  discussion: "Moderate hedging."
+# data/domains/my-field.yaml
+name: "My research field"
+detect_keywords: [myfield, "my model"]
 ```
+
+That's a valid domain. Everything else is optional.
 
 ---
 
 ## Implementation Steps
 
 ### Step 1: Split the lexicon
-**File**: `data/drosophila-lexicon.yaml` → split into two files
+**From**: `data/drosophila-lexicon.yaml` (one file, mixed)
+**To**: `data/lexicon-common.yaml` + `data/domains/drosophila-genetics.yaml`
 
-1a. Create `data/lexicon-common.yaml` with the SHARED entries:
-- `preferred_verbs`, `avoided_verbs`, `avoided_nouns`, `filler_words`
-- `sentence_tells`, `ai_tell_scoring`
-- Generic `conventions` (not species-specific)
-- Generic `statistics`, `hedging`, `voice`, `figures`, `citations`
-- Generic `sloppy_patterns`, `claim_strength`
-- `reporting_standards` (generic parts)
+1a. `data/lexicon-common.yaml` — SHARED entries (AI-tells, fillers, hedging, statistics, sloppy patterns, claim strength). Zero references to any species/domain.
 
-1b. Create `data/domains/drosophila.yaml` with Drosophila-specific:
-- Everything from the `domain:` section
-- `domain_term_mappings`
-- Species, stocks, genotype, balancers, life stages, key citations
-- Drosophila-specific conventions (GAL4, MARCM)
+1b. `data/domains/drosophila-genetics.yaml` — Drosophila-specific (see schema above). Everything from the old `domain:` section + term mappings + species + balancers + GAL4 + MARCM.
 
-1c. Create `data/domains/mouse.yaml`, `cancer.yaml`, `neuroscience.yaml`, `c-elegans.yaml`, `general.yaml` (see schemas above)
+1c. Create a few more domain files as examples:
+- `data/domains/mouse-mammalian.yaml`
+- `data/domains/cancer-biology.yaml`
+- `data/domains/general-biology.yaml` (minimal — just voice rules)
 
-**Verify**: `lexicon-common.yaml` has zero references to Drosophila, GAL4, neuroblast, balancers, flies.
+**Verify**: `grep -ri "drosophila\|GAL4\|neuroblast\|balancer\|fly" data/lexicon-common.yaml` → nothing.
 
-### Step 2: Update Lexicon type
-**File**: `src/anti-ai-lexicon.ts`
+### Step 2: Discover domains at runtime
+**File**: `src/anti-ai-lexicon.ts` (or new `src/domains.ts`)
 
-2a. Make domain fields optional in the `Lexicon` type:
 ```typescript
-interface Lexicon {
-  // ... existing fields ...
-  domain?: {
-    speciesFirstMention?: string[];
-    speciesSubsequent?: string[];
-    balancers?: string[];
-    lifeStages?: string[];
-    domainTermMappings?: { source: string; target: string }[];
-    // ... etc
-  };
-}
-```
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-2b. Update `loadLexicon` to load `lexicon-common.yaml` + a domain profile:
-```typescript
-export function loadLexicon(root: string, domain?: string): Lexicon {
-  const common = loadYaml(join(root, "data", "lexicon-common.yaml"));
-  if (domain && domain !== "general") {
-    const domainProfile = loadYaml(join(root, "data", "domains", `${domain}.yaml`));
-    return mergeLexicon(common, domainProfile);
+// Discover all domains by scanning data/domains/*.yaml
+export function discoverDomains(root: string): DomainProfile[] {
+  const dir = join(root, "data", "domains");
+  try {
+    const files = readdirSync(dir).filter(f => f.endsWith(".yaml"));
+    return files.map(f => {
+      const key = f.replace(".yaml", "");
+      const raw = readFileSync(join(dir, f), "utf-8");
+      return { key, ...parseYaml(raw) };
+    });
+  } catch {
+    return [];  // no domains folder → general mode
   }
-  return parseLexicon(common);
+}
+
+// Auto-detect: score text against each domain's detect_keywords
+export function detectDomain(text: string, domains: DomainProfile[]): string {
+  let best = "general-biology";
+  let bestScore = 0;
+  for (const d of domains) {
+    const keywords = d.detect_keywords ?? [];
+    const score = keywords.filter(kw => new RegExp(kw, "i").test(text)).length;
+    if (score > bestScore) { bestScore = score; best = d.key; }
+  }
+  return best;
+}
+
+// Load: common lexicon + merge domain profile
+export function loadLexicon(root: string, domainKey?: string): Lexicon {
+  const common = loadYaml(join(root, "data", "lexicon-common.yaml"));
+  if (!domainKey) return parseLexicon(common);
+  const domainFile = join(root, "data", "domains", `${domainKey}.yaml`);
+  try {
+    const domain = loadYaml(domainFile);
+    return mergeLexicon(common, domain);
+  } catch {
+    return parseLexicon(common);  // domain file not found → general
+  }
 }
 ```
 
-**Verify**: `npx tsc --noEmit` passes.
+**Key**: NO hardcoded domain list. `discoverDomains` reads the filesystem.
+
+**Verify**: Add a new `data/domains/foo.yaml` → `discoverDomains` returns it. Delete it → gone.
 
 ### Step 3: Rewrite system-injection.ts
 **File**: `src/system-injection.ts`
 
-3a. Replace the hardcoded Drosophila text with a **template** that reads from the domain profile:
+Replace ALL hardcoded text with a **template engine** that reads from the domain profile:
 
 ```typescript
-export function buildSystemInjection(lex: Lexicon, domain: string): string {
+export function buildSystemInjection(lex: Lexicon, domain: DomainProfile | null): string {
   const parts: string[] = [];
 
-  // Always include: AI-tell rules, hedging, voice, reporting
+  // 1. Common rules (always included — AI-tells, hedging, voice, numbers, figures)
   parts.push(buildCommonRules(lex));
 
-  // Domain-specific (only if domain profile has data)
-  if (lex.domain?.speciesFirstMention) {
-    parts.push(buildSpeciesRules(lex.domain));
-  }
-  if (lex.domain?.balancers) {
-    parts.push(buildBalancerRules(lex.domain));
-  }
-  if (lex.domain?.domainTermMappings?.length) {
-    parts.push(buildTermMappingRules(lex.domain));
-  }
-  if (lex.domain?.keyCitations?.length) {
-    parts.push(buildKeyCitationRules(lex.domain));
-  }
+  // 2. Domain-specific rules (only if domain profile has the data)
+  if (!domain) return parts.join("\n\n");
 
-  return parts.join("\n\n");
+  if (domain.species)
+    parts.push(buildSpeciesSection(domain.species));
+  if (domain.stocks)
+    parts.push(buildStocksSection(domain.stocks));
+  if (domain.genotype)
+    parts.push(buildGenotypeSection(domain.genotype));
+  if (domain.balancers)
+    parts.push(buildBalancersSection(domain.balancers));
+  if (domain.nomenclature?.length)
+    parts.push(buildNomenclatureSection(domain.nomenclature));
+  if (domain.key_citations?.length)
+    parts.push(buildKeyCitationsSection(domain.key_citations));
+  if (domain.life_stages?.length)
+    parts.push(buildLifeStagesSection(domain.life_stages));
+  if (domain.term_mappings?.length)
+    parts.push(buildTermMappingsSection(domain.term_mappings));
+  if (domain.reporting)
+    parts.push(buildReportingSection(domain.reporting));
+  if (domain.voice)
+    parts.push(buildVoiceSection(domain.voice));
+
+  // Header
+  const label = domain.name ?? "general";
+  return `[pi-paper-lab ACTIVE — field=${label}]\n\n${parts.join("\n\n")}`;
 }
 ```
 
-3b. Each `build*Rules` function generates text only if the domain profile has the relevant data. For `general.yaml` (empty domain), only common rules are emitted.
+Each `build*Section` function generates text ONLY from the YAML data. If a section is missing from the YAML, it's skipped entirely. No hardcoded species names, no hardcoded balancers, no hardcoded journals.
 
-**Verify**: With `domain="general"`, the system prompt has NO references to Drosophila, GAL4, neuroblast, flies, balancers.
+**Verify**: With a minimal domain `{name: "test"}`, the system prompt has only common rules + `[pi-paper-lab ACTIVE — field=test]`. Zero Drosophila references.
 
-### Step 4: Domain selection mechanism
+### Step 4: Domain selection in /paper-lab
 **File**: `src/config.ts` + `extensions/index.ts`
 
-4a. Add `domain` field to `PaperLabConfig`:
+4a. Add `domain` to config:
 ```typescript
 interface PaperLabConfig {
   serper?: string;
   copyleaks_email?: string;
   copyleaks_api_key?: string;
-  domain?: string;  // "drosophila-genetics" | "mouse-mammalian" | "cancer-biology" | etc.
+  domain?: string;  // key from data/domains/*.yaml
 }
 ```
 
-4b. Add domain selection to `/paper-lab` command:
-```
-/paper-lab
-→ 1. Serper API key
-→ 2. Copyleaks email
-→ 3. Copyleaks API key
-→ 4. Domain: [drosophila-genetics / mouse-mammalian / cancer-biology / neuroscience / c-elegans / general]
-→ 5. Show all
-→ 6. Delete all
-```
-
-4c. Auto-detect domain if not configured:
+4b. `/paper-lab` dynamically lists domains:
 ```typescript
-function detectDomain(text: string): string {
-  if (/drosophila|flies?\s|GAL4|UAS|MARCM|neuroblast/i.test(text)) return "drosophila-genetics";
-  if (/mouse|mice|mus musculus|C57BL|knockout.*mouse/i.test(text)) return "mouse-mammalian";
-  if (/cancer|tumor|xenograft|oncogene|metastasis/i.test(text)) return "cancer-biology";
-  if (/c\.?\s*elegans|nematode|worm/i.test(text)) return "c-elegans";
-  if (/neuron|synapse|cortex|hippocamp/i.test(text)) return "neuroscience";
-  return "general-biology";
-}
+// In paperLabConfigCommand:
+const domains = discoverDomains(ROOT);
+const domainChoices = domains.map(d => `${d.key} — ${d.name}`);
+// Add "Auto-detect (from text)" option
+// Add to the existing menu
 ```
 
-4d. In `extensions/index.ts`, load the domain from config and pass to `loadLexicon` + `buildSystemInjection`:
+NO hardcoded list. The menu shows whatever YAML files exist in `data/domains/`.
+
+4c. In `extensions/index.ts`:
 ```typescript
 const config = loadConfig();
-const domain = config.domain ?? "general-biology";
-const lex = loadLexicon(ROOT, domain);
-const injection = buildSystemInjection(lex, domain);
+const domains = discoverDomains(ROOT);
+const domainKey = config.domain ?? "auto";
+// If "auto", detectDomain is called per-file in the pipeline
+const lex = loadLexicon(ROOT, domainKey === "auto" ? undefined : domainKey);
+const injection = buildSystemInjection(lex, domains.find(d => d.key === domainKey) ?? null);
 ```
 
-**Verify**: `/paper-lab` shows domain selector. Changing domain changes the system prompt.
+**Verify**: Drop `data/domains/foo.yaml` → `/paper-lab` shows "foo". Delete → gone. No code change.
 
 ### Step 5: Update pipeline prompts
 **File**: `src/pipeline.ts`
 
-5a. In `pipelineWrite`, replace hardcoded Drosophila rules with dynamic domain info:
+5a. `pipelineCite` / `pipelineRewrite`: auto-detect domain from text if config is "auto":
 ```typescript
-export async function pipelineWrite(description: string, pi: ExtensionAPI): Promise<void> {
-  const domain = loadConfig().domain ?? "general-biology";
-  const lex = loadLexicon(ROOT, domain);
-  // Build domain-specific instructions from lex.domain
-  const domainRules = buildDomainPromptRules(lex);
-  // ... use domainRules in the prompt instead of hardcoded Drosophila rules
+const config = loadConfig();
+let domainKey = config.domain;
+if (!domainKey || domainKey === "auto") {
+  const domains = discoverDomains(ROOT);
+  domainKey = detectDomain(text, domains);
 }
+// Pass domainKey to buildCiteMarkPrompt
 ```
 
-5b. In `buildCiteMarkPrompt`, remove the hardcoded Drosophila reference in STEP 1 (rewrite instructions). The system prompt already handles voice rules.
+5b. `pipelineWrite`: replace hardcoded Drosophila rules with domain-driven rules:
+```typescript
+const domain = domains.find(d => d.key === domainKey);
+const domainRules = domain ? buildDomainPromptRules(domain) : "";
+// Use domainRules in the prompt instead of hardcoded "neuroblast not neural stem cell" etc.
+```
 
-**Verify**: `/paper-write` with domain=mouse generates text about mice, not Drosophila.
+5c. `buildCiteMarkPrompt`: remove the hardcoded Drosophila rewrite instructions. The system prompt (injected per turn) already handles voice rules. The prompt just says "rewrite for1 for human voice" and the system prompt provides the domain-specific rules.
+
+**Verify**: `/paper-write "write about mouse genetics"` with domain=mouse → text about mice. No Drosophila terms.
 
 ### Step 6: Update tool descriptions
 **File**: `src/tools.ts`
 
-6a. Line 85: `"Rewrite a passage to remove AI-tells and Drosophila-voice violations."`
-→ `"Rewrite a passage to remove AI-tells and domain-specific voice violations."`
+Line 85: `"Drosophila-voice violations"` → `"domain-specific voice violations"`
+Line 110: `"Drosophila-specific Methods/Results"` → `"domain-specific Methods/Results"`
 
-6b. Line 110: `"Check a Markdown draft for IMRaD presence and Drosophila-specific Methods/Results content"`
-→ `"Check a Markdown draft for IMRaD presence and domain-specific Methods/Results content"`
-
-**Verify**: `grep -ri "drosophila" src/tools.ts` returns nothing.
+**Verify**: `grep -ri "drosophila" src/tools.ts` → nothing.
 
 ### Step 7: Update corpus-sources
 **File**: `corpus-sources.md`
 
-7a. Keep Drosophila papers (they inform the Drosophila domain profile)
-7b. Add papers from other domains:
-- Mouse: 2-3 key mouse genetics papers
-- Cancer: 2-3 key cancer biology papers
-- C. elegans: 2-3 key C. elegans papers
-- Neuroscience: 2-3 key neuroscience papers
+Add a section per domain with 2-3 key papers. These inform the domain-specific YAML profiles. Future agents can read these to expand domain lexicon entries.
 
-These inform the domain-specific lexicon entries and voice rules.
-
-### Step 8: Add domain-specific lexicon entries
-**Files**: `data/domains/*.yaml`
-
-For each domain, add 20-50 domain-specific lexicon entries:
-
-8a. **Mouse** (`mouse.yaml`):
-- `domain_term_mappings`: none needed (mouse doesn't have the neural stem cell issue)
-- `nomenclature`: gene italics rules, protein uppercase, transgene format
-- `conventions`: C57BL/6J, BALB/c, FVB/N, knockin/knockout notation
-- `key_citations`: none that are universally required
-
-8b. **Cancer** (`cancer.yaml`):
-- `nomenclature`: cell line format (MCF-7, A549), drug concentration (μM not uM)
-- `conventions`: HR (hazard ratio), CI (confidence interval), OS (overall survival)
-- `domain_term_mappings`: none needed
-
-8c. **C. elegans** (`c-elegans.yaml`):
-- `species`: C. elegans, the worm, worms
-- `strains`: N2, CB, etc.
-- `balancers`: hT2, nT1, sT1
-- `nomenclature`: gene names lowercase italic (e.g. daf-2, let-23)
-- `domain_term_mappings`: none needed
-
-8d. **Neuroscience** (`neuroscience.yaml`):
-- `nomenclature`: brain region abbreviations (CA1, CA3, V1, S1)
-- `conventions`: recording types (patch-clamp, extracellular, two-photon)
-- `domain_term_mappings`: none needed
-
-### Step 9: Test each domain
-For each domain, verify:
-1. `/paper-lab` → set domain → system prompt changes
-2. `/paper-write "write an introduction about X"` → text in correct domain style
-3. `/paper-cite file.md` → citations work (domain-agnostic)
-4. `/paper-rewrite file.md` → rewrite works (domain-agnostic)
-5. `ai_detect_statistical` → scores are reasonable for the domain
-6. No Drosophila-specific terms leak into other domains
-
-### Step 10: Update README
+### Step 8: Update README
 **File**: `README.md`
 
-Add section:
 ```markdown
-## Supported Domains
+## Domains
 
-| Domain | Key | Species | Key Features |
-|---|---|---|---|
-| Drosophila genetics | `drosophila-genetics` | D. melanogaster | GAL4, MARCM, balancers, neuroblast |
-| Mouse/Mammalian | `mouse-mammalian` | M. musculus | Strains, alleles, ARRIVE 2.0 |
-| Cancer biology | `cancer-biology` | — | Cell lines, xenografts, HR/KM |
-| Neuroscience | `neuroscience` | — | Brain regions, recording types |
-| C. elegans | `c-elegans` | C. elegans | Strains, balancers, gene naming |
-| General biology | `general-biology` | — | Minimal rules, no species-specific |
+Domains are YAML files in `data/domains/`. No code changes needed to add one.
 
-Set via `/paper-lab` → option 4. Auto-detected from text if not set.
+### Built-in domains
+(scanned from the folder at runtime — check `data/domains/` for current list)
+
+### Create a custom domain
+Create `data/domains/my-field.yaml`:
+\`\`\`yaml
+name: "My research field"
+detect_keywords: [myfield, "my model"]
+nomenclature:
+  - rule: "My specific naming rule"
+\`\`\`
+Then run `/paper-lab` → select your domain. Done.
 ```
 
 ---
@@ -467,16 +364,18 @@ Set via `/paper-lab` → option 4. Auto-detected from text if not set.
 ## Execution Order
 
 ```
-Step 1 (split lexicon) → Step 2 (update type) → Step 3 (rewrite system-injection) →
-Step 4 (domain selection) → Step 5 (pipeline prompts) → Step 6 (tool descriptions) →
-Step 7 (corpus) → Step 8 (domain lexicon entries) → Step 9 (test) → Step 10 (README)
+Step 1 → Step 2 → Step 3 → Step 4 → Step 5 → Step 6 → Step 7 → Step 8
 ```
 
-Each step gates the next. After Step 4, the extension works in "general" mode.
-After Step 8, all domains work. Step 9 verifies.
+After Step 4: extension works with any domain YAML, auto-detects.
+After Step 5: pipelines are domain-driven.
+Steps 6-8: cleanup.
 
-## Risk: Backward Compatibility
+## Non-negotiable rules for the executor
 
-- Users with existing `drosophila-lexicon.yaml` → the file is split. Add a migration note.
-- Users with `domain` not set in config → default to auto-detect (falls back to `general-biology`).
-- The `silentRewrite` function uses domain term mappings → with no mappings (general mode), it's a no-op for that feature. AI-tell rewrite still works (common lexicon).
+1. NO hardcoded domain names in any .ts file. Ever.
+2. NO `if (domain === "drosophila")`. Ever.
+3. Domain discovery = filesystem scan. Adding a domain = 1 YAML file.
+4. Every domain YAML field is OPTIONAL. A domain with just `name:` is valid.
+5. `buildSystemInjection` generates text from YAML data, not from string literals.
+6. Auto-detect uses `detect_keywords` from YAML, not hardcoded regexes.
