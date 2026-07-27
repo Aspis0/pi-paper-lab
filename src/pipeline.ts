@@ -251,10 +251,13 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
        ``].join("\n")
     : "";
 
-  const startStep = includeRewrite ? 3 : 1;
+  const startStep = includeRewrite ? 2 : 1;
 
+  const studyNotesPath = includeRewrite
+    ? filePath.replace(/\.(?:rewritten\.)?md$/, ".study-notes.md")
+    : "";
   const studyBlock = includeRewrite
-    ? `STEP 1 — CONTEXT REFRESH (optional, only if topic is unclear):\n   If the draft's topic is ambiguous or you need recent literature context, call find_citation 1-3 times. Most rewrites skip this — proceed to STEP 2 if topic is clear.\n\n`
+    ? `STEP 0 — CONTEXT REFRESH (optional, only if topic is unclear):\n   If the draft's topic is ambiguous or you need recent literature context, call find_citation 1-3 times and save notes to ${studyNotesPath.replace(/\\/g, "/")} (same structure as study-notes.md: Topic summary, Key concepts, Candidate references with DOIs). Most rewrites skip this — proceed to STEP 1 if topic is clear.\n\n`
     : "";
 
   return [
