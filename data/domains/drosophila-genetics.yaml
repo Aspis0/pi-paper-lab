@@ -38,7 +38,7 @@ genotype:
 # Balancers — FlyBase canonical (NOT markers)
 balancers:
   canonical: [FM7, FM7a, FM7h, CyO, SM1, SM6a, TM3, TM6B, TM6C, MKRS]
-  markers_NOT_balancers: [Sp, If, Sb, Hu, Tb]
+  not_markers: [Sp, If, Sb, Hu, Tb]
   warning: "Sp/If/Sb/Hu/Tb are MARKERS not balancers. Stocks are written 'Sp/CyO' (marker/balancer)."
 
 # Nomenclature rules

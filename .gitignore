@@ -5,3 +5,5 @@ node_modules/
 dist/
 out/
 *.tsbuildinfo
+nul
+data/drosophila-lexicon.yaml.bak

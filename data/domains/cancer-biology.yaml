@@ -58,8 +58,6 @@ detect_keywords: [cancer, tumor, tumour, xenograft, oncogene, metastasis, "cell 
 term_mappings:
   - source: "tumor cell"
     target: "cancer cell"
-  - source: "cancer cell line"
-    target: "cancer cell line"
 
 # Reporting standards
 reporting:
