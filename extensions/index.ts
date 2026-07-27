@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { loadLexicon } from "../src/anti-ai-lexicon.ts";
 import { buildSystemInjection } from "../src/system-injection.ts";
-import { discoverDomains, getDomain } from "../src/domains.ts";
+import { discoverDomains, getDomain, detectDomain } from "../src/domains.ts";
+import { loadConfig } from "../src/config.ts";
 import { silentRewrite } from "../src/anti-ai-lexicon.ts";
 import { registerTools } from "../src/tools.ts";
 import { pipelineCite, pipelineRewrite, pipelineWrite, generateWord } from "../src/pipeline.ts";
@@ -27,9 +28,24 @@ const ROOT = join(__dirname, "..");
 export default function (pi: ExtensionAPI) {
   const lex = loadLexicon(ROOT);
   const domains = discoverDomains(ROOT);
-  // Use first domain for now (config-based selection comes in Step 4)
-  const activeDomain = domains[0] ?? null;
+  // Resolve active domain: config override → "auto" (detect from text each turn)
+  // → first discovered domain
+  const config = loadConfig();
+  const resolveDomain = (text: string) => {
+    if (config.domain && config.domain !== "auto") {
+      return getDomain(ROOT, config.domain);
+    }
+    // Auto-detect from text
+    const detected = detectDomain(text, domains);
+    if (detected) return getDomain(ROOT, detected);
+    // Fallback: first domain with empty detect_keywords (general fallback)
+    return domains.find(d => !d.detect_keywords || d.detect_keywords.length === 0) ?? domains[0] ?? null;
+  };
+  // For initial injection, use first detected domain (will be refined per-turn)
+  const activeDomain = domains.find(d => !d.detect_keywords || d.detect_keywords.length === 0) ?? domains[0] ?? null;
   const injection = buildSystemInjection(lex, activeDomain);
+  // Make resolveDomain available to other parts of the extension
+  (globalThis as any).__piPaperLab = { lex, domains, resolveDomain };
 
   // === 1. Inject Drosophila voice into the system prompt on every turn ===
   pi.on("before_agent_start", async (event, _ctx) => {

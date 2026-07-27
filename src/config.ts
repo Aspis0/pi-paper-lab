@@ -13,6 +13,7 @@ export interface PaperLabConfig {
   serper?: string;
   copyleaks_email?: string;
   copyleaks_api_key?: string;
+  domain?: string;  // domain key from data/domains/*.yaml, or "auto" for auto-detect
 }
 
 export function loadConfig(): PaperLabConfig {
@@ -50,6 +51,19 @@ export async function paperLabConfigCommand(
   _args: string,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
+  // Discover available domains from filesystem (data-driven, no hardcoded list)
+  const ROOT_DIR = join(homedir(), ".pi", "agent", "extensions", "pi-paper-lab");
+  let domainChoices: Array<{ key: string; label: string }> = [];
+  try {
+    const { discoverDomains } = await import("./domains.ts");
+    const domains = discoverDomains(ROOT_DIR);
+    domainChoices = domains.map(d => ({
+      key: d.key,
+      label: `${d.key} — ${d.name ?? d.key}`,
+    }));
+  } catch {
+    // domains.ts not loadable — continue without domain options
+  }
   const config = loadConfig();
 
   const masked = (key?: string) => {
@@ -75,8 +89,9 @@ export async function paperLabConfigCommand(
     "1. Serper Scholar API key",
     "2. Copyleaks email",
     "3. Copyleaks API key",
-    "4. Show all (masked)",
-    "5. Delete all keys",
+    `4. Domain (current: ${config.domain ?? "auto"})`,
+    "5. Show all (masked)",
+    "6. Delete all keys",
   ]);
 
   if (!choice) return;
@@ -100,6 +115,22 @@ export async function paperLabConfigCommand(
     saveConfig(config);
     ctx.ui.notify("✅ Copyleaks API key saved", "info");
   } else if (choice.startsWith("4")) {
+    // Domain selection (data-driven from filesystem scan)
+    const domainOptions = ["auto — detect from text", ...domainChoices.map(c => c.label)];
+    const selected = await ctx.ui.select("Select domain:", domainOptions);
+    if (selected) {
+      if (selected.startsWith("auto")) {
+        delete config.domain;
+      } else {
+        const match = domainChoices.find(c => selected.includes(c.key));
+        if (match) {
+          config.domain = match.key;
+          saveConfig(config);
+          ctx.ui.notify(`✅ Domain set to: ${match.key}`, "info");
+        }
+      }
+    }
+  } else if (choice.startsWith("5")) {
     ctx.ui.notify(
       [
         "Current keys (masked):",
@@ -110,7 +141,7 @@ export async function paperLabConfigCommand(
       ].join("\n"),
       "info",
     );
-  } else if (choice.startsWith("5")) {
+  } else if (choice.startsWith("6")) {
     const confirm = await ctx.ui.confirm("Delete all keys?", "This will remove all stored API keys. Are you sure?");
     if (confirm) {
       saveConfig({});
