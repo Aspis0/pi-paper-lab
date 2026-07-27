@@ -206,6 +206,7 @@ export async function pipelineWrite(
   pi: ExtensionAPI,
 ): Promise<void> {
   const outPath = join(homedir(), "Desktop", "paper-write-output.md");
+  const notesPath = outPath.replace(/\.md$/, ".study-notes.md");
 
   const prompt = [
     `Write new text for a biology paper based on this description:`,
@@ -219,12 +220,20 @@ export async function pipelineWrite(
     ``,
     `Do these steps ALL IN ONE TURN:`,
     ``,
-    `STEP 1 — WRITE: Write the text to ${outPath.replace(/\\/g, "/")}. Make it sound human, not AI-generated.`,
+    `STEP 0 — STUDY (before writing anything):`,
+    `   a) Call find_citation 3-5 times IN PARALLEL with different query variants of the description.`,
+    `      Variants: as-is, reversed word order, with synonyms (imaging<->characterization), narrower scope, "<desc> review".`,
+    `   b) Optionally call web_search or fetch_content for broader context or full abstracts.`,
+    `   c) If ALL searches fail: note it in study-notes.md, mark uncertain claims [CITATION NEEDED], proceed to STEP 1 anyway (NEVER block).`,
+    `   d) Write study-notes.md to ${notesPath.replace(/\\/g, "/")}: with sections: Topic summary, Key concepts (5-10 terms), Standard methods, Voice/structure observations, Candidate references (numbered, with DOIs), Specific findings (each tagged [ref N]).`,
+    `   e) Report number of papers reviewed.`,
+    ``,
+    `STEP 1 — WRITE: Use study-notes.md + system prompt voice rules. Ground every claim in study notes (cite paper N from candidate list). Use DOIs from study-notes.md, NOT invented ones. Write to ${outPath.replace(/\\/g, "/")}.`,
     `STEP 2 — AI CHECK: Call ai_detect_statistical on your text. If score >40%, rewrite flagged sentences. Re-test. Max 3 rounds.`,
     `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets. Update ${outPath.replace(/\\/g, "/")}.`,
     `STEP 4 — FINALIZE: Run this bash command:`,
     `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${outPath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
-    `STEP 5 — REPORT: Tell the user the .docx path and the AI score. Do NOT read the .docx (binary).`,
+    `STEP 5 — REPORT: Tell the user: number of papers studied, path to study-notes.md, path to .docx. Do NOT read the .docx (binary).`,
   ].join("\n");
 
   pi.sendUserMessage(prompt, { deliverAs: "followUp" });
