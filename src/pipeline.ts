@@ -170,13 +170,15 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
     `   [N](<doi:10.1016/s0896-6273(00)80701-1>)`,
     `   Number citations sequentially [1], [2], [3]...`,
     ``,
-    `BIBLIOGRAPHY: After assigning all DOIs, use bash to generate the References section:`,
-    `   Run this bash command (replace FILE with your resolved draft path):`,
-    `   node --experimental-strip-types -e "import('C:/Users/gualt/Desktop/pi-paper-lab/src/citations.ts').then(async ({generateBibliography, formatBibliography}) => { const fs=require('fs'); const text=fs.readFileSync('FILE','utf8'); const {bibliography}=await generateBibliography(text, new Map()); fs.writeFileSync('FILE', text + '\\n\\n' + formatBibliography(bibliography)); console.log('Bibliography:', bibliography.length, 'entries'); });"`,
-    ``,
-    `WORD: Use bash to generate the .docx using the extension's generateWord function:`,
-    `   export PATH="$HOME/.local/bin:$PATH" && node --experimental-strip-types -e "import('C:/Users/gualt/Desktop/pi-paper-lab/src/pipeline.ts').then(({generateWord}) => { const r = generateWord('FILE.md', 'FILE.docx'); if (r.error) console.log('Error:', r.error); else console.log('Word:', r.docxPath, 'links:', r.footnoteCount); });"`,
-    `   generateWord automatically: strips DOI from text, makes [N] superscript, adds cross-reference links.`,
+    `FINALIZE: After writing the resolved .md with [N](doi:...) markers, call finalizeDoc via bash:`,
+    `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${filePath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
+    `   finalizeDoc does EVERYTHING automatically:`,
+    `   - strips any old References section (idempotent, safe to re-run)`,
+    `   - looks up each DOI on CrossRef → builds Vancouver citations`,
+    `   - strips (doi:...) from text, makes [N] superscript with <sup>[N]</sup>`,
+    `   - appends References section at the end (DOI only there, never in text)`,
+    `   - creates .docx with --force (overwrites old file)`,
+    `   You do NOT need to run docx create or generate bibliography yourself.`,
     `   Do NOT read or cat the .docx file — it's binary.`,
     ``,
     `REPORT: Tell the user the path to the .docx file.`,
@@ -195,6 +197,8 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
       `   e) Re-test: call ai_detect_statistical again on the new version.`,
       `   f) REPEAT steps d-e until AI score < 40% or you have done 3 iterations.`,
       `   g) Write the final rewritten draft to ${filePath.replace(/\.md$/, ".rewritten.md")}.`,
+      `      This file already exists (pre-filled by the silent-rewrite pass). Overwrite it with your improved version.`,
+      `   h) IMPORTANT: when you reach the FINALIZE step, pass THIS rewritten file path`,
       `   Report the initial and final AI scores to the user.`,
       ``,
     ];
@@ -233,9 +237,88 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
   }
 }
 
-// === Generate .docx from a resolved Markdown file ===
+// === finalizeDoc: ONE function that does everything ===
+// Reads .md with [N](doi:...) → generates bibliography → strips DOI → superscript [N] → .docx
+// The LLM only needs to write the .md and call this.
+export function finalizeDoc(markdownPath: string): { docxPath: string; bibliographyCount: number; error?: string } {
+  const docxPath = markdownPath.replace(/\.md$/i, ".docx");
+  let text = readFileSync(markdownPath, "utf-8");
+
+  // 0. Strip any existing References section (idempotent — safe to re-run)
+  // Step 0a: If the last line is exactly "## References" (no content after), remove it.
+  text = text.replace(/\n*##\s*References\s*$/i, "");
+  // Step 0b: Strip --- separator + ## References + bibliography content to EOF.
+  text = text.replace(/\n*---\n*##\s*References[\s\S]*$/i, "");
+  // Step 0c: Strip bare ## References heading (must be followed by newline or EOF —
+  // NOT mid-sentence like "## References is important") + bibliography to EOF.
+  text = text.replace(/\n*##\s*References(?=\s*\n|\s*$)[\s\S]*$/i, "");
+
+  // 1. Parse all [N](doi:...) markers and build Vancouver citations via CrossRef
+  const citations = new Map<number, string>();
+  // Match: [N](doi:XXX), [N](doi: XXX) with optional space, [N](<doi:XXX>) angle-bracket form,
+  // and [N](https://doi.org/XXX) URL form. Group 2=plain, 3=angle, 4=URL prefix.
+  const re = /\[(\d+)\]\((?:doi:\s*([^)>\n]+)|<doi:\s*([^>\n]+)>|https?:\/\/doi\.org\/([^)\s\n]+))\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const num = parseInt(m[1]);
+    const doi = (m[2] ?? m[3] ?? m[4])?.trim();
+    if (!doi || citations.has(num)) continue;
+    try {
+      const work = lookupDoiSync(doi);
+      if (work) {
+        const authors = (work.author ?? []).map((a: any) =>
+          a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ");
+        const year = work.published?.["date-parts"]?.[0]?.[0]
+          ?? work["published-print"]?.["date-parts"]?.[0]?.[0]
+          ?? work["published-online"]?.["date-parts"]?.[0]?.[0] ?? "?";
+        const title = work.title?.[0] ?? "(untitled)";
+        const journal = work["container-title"]?.[0] ?? "";
+        const vol = work.volume ?? "";
+        const pages = work.page ?? "";
+        citations.set(num, `${num}. ${authors}. ${title}. ${journal}. ${year}${vol ? ";" + vol : ""}${pages ? ":" + pages : ""}. doi:${doi}`);
+      } else {
+        citations.set(num, `${num}. (doi:${doi})`);
+      }
+    } catch {
+      citations.set(num, `${num}. (doi:${doi})`);
+    }
+  }
+
+  // 2. Strip [N](doi:...) → <sup>[N]</sup> (superscript, NO DOI in text)
+  // Must match the same formats as the parser above.
+  text = text.replace(/\[(\d+)\]\((?:doi:\s*[^)>\n]+|<doi:\s*[^>\n]+>|https?:\/\/doi\.org\/[^)\s\n]+)\)/g, (_m, num) => `<sup>[${num}]</sup>`);
+  // Also strip any remaining [CITE:topic] → [CITATION NEEDED]
+  text = text.replace(CITE_MARKER, (_m, topic) => `[CITATION NEEDED: ${topic}]`);
+
+  // 3. Append References section (DOI only here, never in text)
+  if (citations.size > 0) {
+    const refs = [...citations.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c).join("\n\n");
+    text += `\n\n---\n\n## References\n\n${refs}\n`;
+  }
+
+  // 4. Create .docx with --force (overwrite)
+  const tempMd = markdownPath.replace(/\.md$/i, ".final.md");
+  try {
+    writeFileSync(tempMd, text, "utf-8");
+  } catch (err: any) {
+    return { docxPath: "", bibliographyCount: 0, error: `Cannot write temp file: ${err?.message}` };
+  }
+  try {
+    execFileSync("docx", ["create", docxPath, "--from", tempMd, "--force"], { stdio: "pipe" });
+  } catch (err: any) {
+    try { unlinkSync(tempMd); } catch {}
+    const detail = err?.stderr ? String(err.stderr).slice(0, 200) : err?.message;
+    return { docxPath: "", bibliographyCount: 0, error: `docx create failed: ${detail}` };
+  }
+  try { unlinkSync(tempMd); } catch {}
+
+  return { docxPath, bibliographyCount: citations.size };
+}
+
+// === Generate .docx from a resolved Markdown file (legacy, kept for /paper-to-word) ===
 // Step 1: create .docx with [N] as plain text
 // Step 2: for each [N], add a Word footnote (superscript reference + citation text at bottom)
+// NOTE: finalizeDoc is the preferred function. This is kept for backward compat.
 export function generateWord(
   markdownPath: string,
   outputPath?: string,
