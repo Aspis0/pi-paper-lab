@@ -224,7 +224,7 @@ export async function pipelineWrite(
     ``,
     `STEP 1 — WRITE: Write the text to ${outPath.replace(/\\/g, "/")}. Make it sound human, not AI-generated.`,
     `STEP 2 — AI CHECK: Call ai_detect_statistical on your text. If score >40%, rewrite flagged sentences. Re-test. Max 3 rounds.`,
-    `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](doi:10.xxxx). Update ${outPath.replace(/\\/g, "/")}.`,
+    `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets. Update ${outPath.replace(/\\/g, "/")}.`,
     `STEP 4 — FINALIZE: Run this bash command:`,
     `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${outPath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
     `STEP 5 — REPORT: Tell the user the .docx path and the AI score. Do NOT read the .docx (binary).`,
@@ -255,7 +255,7 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
     `---`,
     ``,
     rewriteBlock,
-    `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch parallel). Assign [N](doi:10.xxxx) sequentially. Write the resolved file to ${filePath}.`,
+    `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch parallel). Assign [N](<doi:10.xxxx>) sequentially — ALWAYS use angle brackets around the doi, even for simple DOIs. Write the resolved file to ${filePath}.`,
     `STEP ${startStep + 1} — FINALIZE: Run this bash command (it does bibliography + superscript + .docx automatically):`,
     `   ${finalizeCmd}`,
     `STEP ${startStep + 2} — REPORT: Tell the user the .docx path. Do NOT read the .docx (binary).`,
@@ -280,11 +280,11 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
   // NOT mid-sentence like "## References is important") + bibliography to EOF.
   text = text.replace(/\n*##\s*References(?=\s*\n|\s*$)[\s\S]*$/i, "");
 
-  // 1. Parse all [N](doi:...) markers and build Vancouver citations via CrossRef
+  // 1. Parse all [N](<doi:...>) and [N](doi:...) markers and build Vancouver citations via CrossRef
   const citations = new Map<number, string>();
-  // Match: [N](doi:XXX), [N](doi: XXX) with optional space, [N](<doi:XXX>) angle-bracket form,
-  // and [N](https://doi.org/XXX) URL form. Group 2=plain, 3=angle, 4=URL prefix.
-  const re = /\[(\d+)\]\((?:doi:\s*([^)>\n]+)|<doi:\s*([^>\n]+)>|https?:\/\/doi\.org\/([^)\s\n]+))\)/g;
+  // Primary: angle-bracket form [N](<doi:XXX>) — handles ALL DOIs including parens
+  // Fallback: plain form [N](doi:XXX) — but only for DOIs without parens (safe)
+  const re = /\[(\d+)\]\((?:<doi:\s*([^>\n]+)>|doi:\s*([^)>\n]+))\)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const num = parseInt(m[1]);
@@ -311,9 +311,8 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
     }
   }
 
-  // 2. Strip [N](doi:...) → <sup>[N]</sup> (superscript, NO DOI in text)
-  // Must match the same formats as the parser above.
-  text = text.replace(/\[(\d+)\]\((?:doi:\s*[^)>\n]+|<doi:\s*[^>\n]+>|https?:\/\/doi\.org\/[^)\s\n]+)\)/g, (_m, num) => `<sup>[${num}]</sup>`);
+  // 2. Strip [N](<doi:...>) and [N](doi:...) → <sup>[N]</sup> (superscript, NO DOI in text)
+  text = text.replace(/\[(\d+)\]\((?:<doi:\s*[^>\n]+>|doi:\s*[^)>\n]+)\)/g, (_m, num) => `<sup>[${num}]</sup>`);
   // Also strip any remaining [CITE:topic] → [CITATION NEEDED]
   text = text.replace(CITE_MARKER, (_m, topic) => `[CITATION NEEDED: ${topic}]`);
 
