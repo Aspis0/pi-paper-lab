@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": false,
+    "verbatimModuleSyntax": false,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["extensions/**/*", "src/**/*"]
+}

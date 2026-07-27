@@ -1,0 +1,676 @@
+# Drosophila genetics lexicon — distilled from manual reading of:
+#   - cCCTomics (eLife 2023, Deng et al.) — paper 1
+#   - Tissue-specific CRISPR mutagenesis (eLife 2020, Port et al.) — paper 2
+#   - CRIMIC/KozakGAL4 toolkit (eLife 2022, Kanca et al.) — paper 3
+#   - Brand & Perrimon 1993 GAL4/UAS (Development)
+#   - Rubin & Spradling 1982 P-element (Science)
+#   - Greenspan, Fly Pushing (2nd ed.) — laboratory manual
+#   - Sood et al. 2024 eLife (Notch/neuroblast termination, Bellen lab) — paper 7
+#   - Drosophila medulla neuroblast termination (eLife, 2023) — paper 8
+#   - Repressor-decay timer (eLife 2019, ~2022 revision) — paper 9
+#
+# Use: load this in before_agent_start to inject writing voice into pi's system prompt,
+# AND use it as dictionary for the silent-rewrite interceptor.
+
+# === Verbs accepted in Drosophila writing ===
+preferred_verbs:
+  action_physics_biology:
+    - measure
+    - quantify
+    - assess
+    - score
+    - determine
+    - estimate
+    - calculate
+    - compute
+  genetics_specific:
+    - cross
+    - outcross
+    - inter se cross
+    - recombine
+    - balance
+    - map
+    - localize
+    - integrate
+    - excise
+    - rescue
+  imaging_expression:
+    - image
+    - visualize
+    - inspect
+    - record
+    - mount
+    - dissect
+  behavior_assay:
+    - monitor
+    - record
+    - count
+    - track
+  analysis:
+    - identify
+    - characterize
+    - compare
+    - contrast
+    - parse
+    - compile
+  reporting_only_for_results:
+    - find
+    - observe
+    - detect
+    - recover
+    - recover
+    - reveal
+    - show
+    - reveal
+
+# === Verbs that are AI-tells or community-taboos ===
+# When you encounter these, prefer the preferred alternative.
+avoided_verbs:
+  - "delve into"
+  - "delve"
+  - "navigate"
+  - "shed light on"
+  - "shed new light on"
+  - "unravel"
+  - "unravel the mysteries of"
+  - "leverage"
+  - "leverage the power of"
+  - "foster"
+  - "elucidate"
+  - "uncover the mysteries"
+  - "explore the complexities of"
+  - "explore the intricate"
+  - "tackle the challenge"
+  - "address the question"
+  - "revolutionize"
+  - "transform our understanding"
+  - "pave the way"
+  - "open new avenues"
+  - "drive innovation"
+  - "plays a crucial role in"
+  - "plays a key role in"
+  - "plays an essential role in"
+  - "plays a critical role in"
+  - "plays a vital role in"
+  - "play a crucial role in"
+  - "play a key role in"
+  - "play an essential role in"
+  # v0.4 additions (sloppy human + AI)
+  - "plays a major role in"
+  - "plays a central role in"
+  - "plays an important role in"
+  - "play a major role in"
+  - "play a central role in"
+  - "play an important role in"
+  - "plays a significant role in"
+  - "play a significant role in"
+  - "is known to"
+  - "are known to"
+  - "has been shown to"
+  - "have been shown to"
+  - "has previously been shown to"
+  - "have previously been shown to"
+  - "has been well established that"
+  - "have been well established that"
+  - "it is well established that"
+  - "it is widely accepted that"
+  - "it is generally accepted that"
+  - "it is now clear that"
+  - "it has become clear that"
+
+# === Nouns that mark AI prose ===
+avoided_nouns:
+  - "intricacies"
+  - "intricate"
+  - "intricate network"
+  - "tapestry"
+  - "the multifaceted nature of"
+  - "multifaceted nature"
+  - "multifaceted"
+  - "multifaceted role"
+  - "holistic"
+  - "holistic approach"
+  - "landscape"          # metaforico (es. "the genetic landscape of...")
+  - "a deeper understanding"
+  - "complex interplay"
+  - "myriad of"
+  - "myriad"
+  - "burgeoning field"
+  - "exciting frontier"
+  - "realms of"
+  - "synergistic"
+  - "cutting-edge"
+  - "state-of-the-art"
+  - "novel insights"      # autoreferenziale
+  - "novel approach"
+  - "novel therapeutic targets"
+  - "groundbreaking"
+  - "unprecedented"
+  - "revolutionary"
+  - "profound"
+  - "remarkable"
+  # v0.4 additions
+  - "a deeper understanding of"
+  - "deeper understanding"
+  - "a better understanding of"
+  - "better understanding"
+  - "remain poorly understood"
+  - "remains poorly understood"
+  - "remain largely unknown"
+  - "remains largely unknown"
+  - "remain elusive"
+  - "remains elusive"
+  - "remains unclear"
+  - "are poorly defined"
+  - "is poorly defined"
+  - "a long-standing question"
+  - "long-standing question"
+  - "long-standing mystery"
+  - "unresolved question"
+  - "open question"
+  - "limited understanding"
+  - "our current understanding"
+  - "the molecular mechanisms underlying"
+  - "the underlying mechanisms"
+  - "the precise mechanisms"
+  - "the intricate mechanisms"
+  - "a myriad of"
+  - "a plethora of"
+  - "plethora"
+  - "an array of"
+  - "a suite of"
+  - "a host of"
+  - "a wealth of"
+
+# === Filler / bumper words — DELETE on sight ===
+filler_words:
+  adverbs_to_remove:
+    - "crucially"
+    - "notably"
+    - "importantly"
+    - "essentially"
+    - "fundamentally"
+    - "remarkably"
+    - "interestingly"
+    - "surprisingly"        # spesso used to fake narrative arc; verify p-value
+    - "literally"
+    - "very"
+    - "really"
+    - "quite"
+    - "rather"
+    - "somewhat"
+    # v0.4 additions (distilled from eLife 2024 Notch paper)
+    - "indeed"           # AI-favourite confirmatory; usually deletable
+    - "clearly"          # over-asserts; let the data speak
+    - "obviously"
+    - "of course"
+    - "as expected"      # post-hoc framing; remove unless explicitly tested
+  phrase_openers_to_remove:
+    - "It is important to note that"
+    - "It is worth noting that"
+    - "It should be noted that"
+    - "Of note,"
+    - "It is interesting that"
+    - "Fascinatingly,"
+    - "Notably,"
+    - "In conclusion,"
+    - "To summarize,"
+    - "In summary,"
+    - "This paper aims to"
+    - "We believe"
+    - "We hypothesize that"
+    # v0.4 additions (sloppy human openers seen in drafts)
+    - "As mentioned earlier,"
+    - "As discussed above,"
+    - "As is well known,"
+    - "It has long been known that"
+    - "Historically,"
+    - "In recent years,"
+    - "With the advent of"
+    - "In the post-genomic era,"
+    - "In the era of"
+    - "Driven by the rapid development of"
+    - "Spurred by"
+    - "Motivated by"
+    - "Inspired by nature,"
+  # Connector phrases that compress verbose AI-flavoured English into tighter prose.
+  # Format: a YAML map (phrase -> replacement). The source-of-truth is the YAML.
+  phrase_connectors_to_rephrase:
+    "in order to": "to"
+    "due to the fact that": "because"
+    "in spite of the fact that": "although"
+    "with regard to": "for"
+    "in the event that": "if"
+    "a large number of": "many"
+    "the majority of": "most"
+    "at this point in time": "now"
+    "is able to": "can"
+
+# === Sentence-level tells ===
+sentence_tells:
+  overused_cleft:
+    - "It is ... that ..."
+    - "What is ... is ..."
+  ai_signature_openers:
+    - "Imagine a world where"
+    - "Picture this:"
+    - "Buckle up"
+    - "Let's dive in"
+    - "Let us delve"
+    - "Let's explore"
+    - "We are excited to"
+    - "We are thrilled to"
+    - "We're excited to present"
+    - "In today's rapidly evolving"
+  appositive_stack_overflow:
+    # Cluster di aggettivi qualificativi che AI mette 3-4 di fila
+    pattern: "robust, comprehensive, and systematic"
+    pattern_replacement: "systematic"
+
+# === Domain conventions Drosophila-specific ===
+conventions:
+  species_first_mention:
+    - "Drosophila melanogaster"
+    - "the fruit fly"
+    - "_Drosophila_"
+    - "the fly"
+  species_subsequent:
+    - "the fly"
+    - "Drosophila"  # italicized in print, plain text here
+    - "flies"
+  stock_reference:
+    format: "BDSC stock #91234"   # Bloomington Drosophila Stock Center
+    alternatives:
+      - "from the BDSC"
+      - "obtained from the BDSC"
+      - "kindly provided by [PI Name]"
+  genotype_notation:
+    style: "italics; sex chromosomes; balancer chromosomes"
+    example: "y[1] w[1118]; +; P{y[+t7.7] w[+mC]=GAL4}attP2"
+    plain_text_example: "y w; +; P{GAL4}attP2"
+    rules:
+      - "use sex chromosomes first (X/Y)"
+      - "use semicolons to separate chromosomes"
+      - "use + for wild-type allele"
+  balancer_notation:
+    canonical:
+      # X-chromosome balancers (FM7 family — required for X-linked MARCM/germline-clone work).
+      - "FM7"
+      - "FM7a"
+      - "FM7h"
+      # Chromosome 2 balancers (CyO + SM series).
+      - "CyO"
+      - "SM1"
+      - "SM6a"
+      # Chromosome 3 balancers.
+      - "TM3"
+      - "TM6B"
+      - "TM6C"
+      - "MKRS"
+    markers_paired_with_balancers_NOT_balancers_themselves:
+      - "Sp"
+      - "If"
+      - "Sb"
+      - "Hu"
+      - "Tb"
+    note: |
+      Sp, If, Sb, Hu, Tb are MARKERS, not balancers. Stocks are written
+      "Sp/CyO" or "If/CyO" etc. (marker over balancer). Using "Sp balancer"
+      is a category error any fly geneticist catches.
+      T(2;3) is a TRANSLOCATION notation, not a balancer name.
+  transgene_naming:
+    gal4_example: "R57C10-GAL4"
+    uas_example: "UAS-Cas9"
+    rules:
+      - "Always capitalize 'GAL4' (not 'Gal4') in print"
+      - "Construct names use camelcase with hyphen separators"
+      - "Promoter-GAL4 convention widely used"
+      - "UAS- prefix in italic in print"
+  fly_life_stage_terms:
+    - "embryo"          # singular; embryos plural
+    - "first-instar larva (L1)"
+    - "second-instar larva (L2)"
+    - "third-instar larva (L3)"
+    - "wandering L3"
+    - "white prepupa"
+    - "pupa"
+    - "pharate adult"
+    - "adult"
+  sex_canonical:
+    - "female"
+    - "male"
+    - "virgin female"
+    - "aged virgin female"
+  standard_assays:
+    - "MARCM clone analysis"
+    - "FLP-out clone"
+    - "MOSAIC analysis"
+    - "germline clone"
+    - "eyeful screen"
+  standard_tools_mention_full:
+    - "the GAL4/UAS binary expression system (Brand and Perrimon, 1993)"
+    - "the FLP recombinase (Golic and Lindquist, 1989)"
+    - "the FLP/FRT system (Xu and Rubin, 1993)"
+    # Primary technique paper, NOT the 2001 TINS review.
+    - "MARCM (Lee and Luo, 1999, Neuron 22:451–461)"
+
+  # === Domain-term mappings (biological rewrite rules) ===
+  domain_term_mappings:
+    # Mammalian/cross-species term → Drosophila genetics standard.
+    - source: "neural stem cell"
+      target: "neuroblast"
+    - source: "neural stem cells"
+      target: "neuroblasts"
+    - source: "neural stem cell specification"
+      target: "neuroblast specification"
+    - source: "neural progenitor"
+      target: "neuroblast"
+    - source: "neural progenitors"
+      target: "neuroblasts"
+  # Anti-intensifiers / AI-tell adjectives.
+  adjective_intensifiers_to_avoid:
+    - "crucial"
+    - "critical"
+    - "essential"
+    - "vital"
+    - "remarkable"
+    - "profound"
+    - "novel"
+    - "unprecedented"
+    - "pivotal"
+    - "groundbreaking"
+    - "innovative"
+  # Anti-self-promotion openers.
+  self_promotion_openers_to_remove:
+    - "for the first time"
+    - "to our knowledge"
+    - "novel"
+    - "groundbreaking"
+  # === Research resource identifiers (RRIDs) ===
+  rrid_policy:
+    required_when: "any paper using stocks, antibodies, or cell lines (eLife/Genetics/G3 mandate)"
+    stock_format: "RRID:BDSC_<stock_number>"
+    antibody_format: "RRID:AB_<antibody_number>"
+    placement: "Key Resources Table (KRT) at end of manuscript"
+    rules:
+      - "Every fly stock mentioned must include its RRID in the KRT"
+      - "Every antibody must include source (host species), catalog/RRID, and dilution"
+      - "Use Bloomington's RRID lookup: https://bdsc.indiana.edu/information/stock_lookup.php"
+    example_methods_line: "anti-Dpn (rabbit polyclonal, 1:500; gift from Y. Cai, RRID:AB_2090371)"
+
+# === Numbers / statistics policy ===
+statistics:
+  p_value_format:
+    - "p<0.05"
+    - "p<0.01"
+    - "p<0.001"
+    - "p=0.013"
+    - "ns"           # non significant, abbreviato
+  ci_format:
+    - "95% CI [a, b]"
+    - "99% CI [a, b]"
+  effect_size:
+    required_when: "every p-value reported"
+    types:
+      - "Cohen's d"
+      - "Hedges' g"
+      - "Pearson's r"
+      - "R²"
+      - "η²"
+  n_required:
+    body: "always (n=X per genotype, n=X replicates)"
+    figure_legend: "always"
+  multiple_testing:
+    methods:
+      - "Bonferroni"
+      - "Bonferroni-Holm"
+      - "Benjamini-Hochberg (FDR)"
+    mention_required_when: ">5 comparisons per figure"
+
+# === Hedging calibration ===
+hedging:
+  introduction:
+    assertiveness: "high"
+    allowed:
+      - "we hypothesized"
+      - "we predicted"
+      - "we asked whether"
+    avoided:
+      - "we speculated"
+      - "one might wonder"
+      - "it is tempting to speculate"
+  methods:
+    assertiveness: "highest"
+    no_hedging: true
+  results:
+    assertiveness: "high — state findings directly"
+    required_format:
+      - "We found that X."
+      - "X was reduced by Y% (n=Z, p=W)."
+      - "Of the N flies examined, M showed phenotype."
+    avoided:
+      - "Our results may suggest"
+      - "might indicate"
+      - "could potentially reflect"
+  discussion:
+    interpretation_paragraph: "moderate hedging"
+    speculation_paragraph_final: "explicit hedging allowed"
+    required_format:
+      - "These results are consistent with..."
+      - "We propose that..."
+      - "An alternative explanation is..."
+    avoided:
+      - "Our findings prove that..."
+      - "We demonstrate that... (unless truly demonstrated with replicates)"
+
+# === First person / voice ===
+voice:
+  introduction:
+    # Current Drosophila practice (eLife/Genetics 2020+) accepts "Here, we..."
+    # as a single orienting sentence in Introductions. Hard "no first person"
+    # rules are outdated.
+    can_use: limited
+    reason: "first person accepted in Drosophila Introductions as 'Here, we...' (single orienting sentence)"
+    preferred_pattern: "Here, we ..."
+    avoid_patterns:
+      - "We believe..."
+      - "We think..."
+      - "We feel..."
+  methods:
+    first_person_we: true
+    passive_ok: true
+    format:
+      - "We crossed..."
+      - "Flies were raised on..."
+      - "We imaged..."
+  results:
+    first_person_we: true
+    recommended: true
+    passive_ok: false
+    format:
+      - "We identified..."
+      - "Quantification revealed..."
+      - "We measured..."
+  discussion:
+    first_person_we: true
+    recommended: true
+    format:
+      - "We propose that..."
+      - "Our results suggest..."
+      - "We favor the interpretation that..."
+  conclusion_optional: true
+
+# === Figure / table references ===
+figures:
+  reference_style:
+    - "Figure 1A shows..."     # active verb first
+    - "Figure 1B,C"            # comma-separated
+    - "(Figure 1A)"
+    - "as shown in Figure 1"
+  avoid:
+    - "As can be seen in Figure 1"
+    - "From Figure 1, it can be seen that"
+    - "It is evident from Figure 1 that"
+    - "Looking at Figure 1, we can see"
+
+# === Citation style ===
+citations:
+  inline_format:
+    - "(Author, Year)"
+    - "Author et al. (Year)"
+    - "Author and Author (Year)"
+  when_no_citation_yet:
+    action: "mark [CITATION NEEDED: <topic>]"
+    never_invent: true
+    note: "NEVER cite a paper that doesn't exist locally — model will hallucinate DOIs"
+
+# === Reporting standards — Drosophila-relevant ===
+reporting_standards:
+  arrive_2_essentials:
+    field: "biology/animal/drosophila"
+    description: "Animal Research: Reporting of In Vivo Experiments 2.0 (Percie du Sert et al. 2020)"
+    reference: "arriveguidelines.org — Essential 10"
+    missing_in_methods_if_absent:
+      # === Essential 10 items (Oracle B5 fix) ===
+      - "Study design (controlled vs observational, between-subject etc.)"
+      - "Sample size with rationale (a priori power calc or pilot)"
+      - "Inclusion and exclusion criteria for animals and data"
+      - "Randomisation (method + who)"
+      - "Blinding (of quantification; who counted, who analysed)"
+      - "Outcome measures (primary and secondary)"
+      - "Statistical methods (test, software, multiple-testing correction)"
+      - "Experimental animals (species, strain, sex, age, weight, source/RRID)"
+      - "Experimental procedures (housing, food, light cycle, temperature)"
+      - "Results summary (n per group, statistical result per figure, adverse events)"
+    recommended_set_NOT_essentials:
+      - "Ethical approval (IACUC protocol) — Drosophila generally exempt in the US"
+      - "Housing details (also covered in Essential 9)"
+      - "Animal care and monitoring"
+      - "Interpretation/scientific implications (best in Discussion)"
+      - "Generalisability/translation"
+      - "Protocol registration"
+      - "Data access"
+      - "Declaration of interests"
+      - "Funding"
+    check_command: "/bio-standards"
+
+# === Sloppy human writing patterns (v0.4 — for /bio-sloppy) ===
+# These are NOT AI-tells but bad habits of junior scientists. /bio-sloppy flags them.
+sloppy_patterns:
+  vague_quantifiers:
+    - "a few"           # → give exact n
+    - "several"         # → give exact n
+    - "many"            # → give exact n or range
+    - "some"            # → give exact n or percentage
+    - "a subset of"     # → specify
+    - "the majority of" # → give %
+    - "a portion of"    # → specify
+  vague_time:
+    - "shortly after"   # → give minutes/hours/stage
+    - "after a while"
+    - "at some point"
+    - "in due course"
+    - "over time"        # acceptable if trend, not single timepoint
+  vague_location:
+    - "in the brain"     # → specify region/neuropil
+    - "in the CNS"
+    - "throughout the animal"
+  causal_overclaim:
+    # These are verb/phrase templates — we extract the verb from each.
+    - "causes"           # unless rescue + loss-of-function shown
+    - "is responsible for"
+    - "drives"
+    - "is the key regulator of"
+    - "is essential for"  # unless lethal/null phenotype shown
+    - "is indispensable for"
+    - "is solely responsible for"
+    - "is the major determinant of"
+    - "is the primary driver of"
+  correlation_causation_conflation:
+    # v0.4 — bare verbs (Option A from deepseek review: matches real text, not templates)
+    - "regulates"       # if only co-expression data → rephrase to 'correlates with'
+    - "controls"
+    - "determines"
+    - "directs"
+    - "governs"
+    - "specifies"
+  passive_overuse:
+    # Methods passive OK; Results passive = sloppy
+    - "was observed"
+    - "were seen"
+    - "was detected"
+    - "were found"
+    - "it was noted that"
+  hedge_overuse_in_results:
+    - "may suggest"
+    - "could indicate"
+    - "might reflect"
+    - "potentially"
+    - "possibly"
+    - "conceivably"
+
+# === Claim strength policy (v0.4 — for claim_strength_check tool) ===
+claim_strength:
+  # Map n + p + replicates to an assertion grade.
+  grades:
+    strong_observation:
+      requires:
+        - "p < 0.01"
+        - "n >= 30 per group"
+        - ">= 3 biological replicates"
+        - "effect size reported (Cohen's d, Hedges' g, η²)"
+        - "95% CI reported"
+      allowed_verbs: ["show", "demonstrate", "establish", "prove"]
+    observation:
+      requires:
+        - "p < 0.05"
+        - "n >= 15 per group"
+        - ">= 2 biological replicates"
+      allowed_verbs: ["find", "observe", "report", "identify"]
+    preliminary:
+      requires:
+        - "p < 0.05"
+        - "n < 15 per group OR only 1 replicate"
+      allowed_verbs: ["observe tentatively", "report preliminary evidence"]
+      required_qualifier: "(preliminary; requires replication)"
+    speculative:
+      requires: []
+      allowed_verbs: ["hypothesize", "propose", "speculate"]
+      required_qualifier: "(speculative; no supporting data shown)"
+  # If a Results sentence uses a strong verb without meeting requirements → flag.
+  overclaim_verbs_in_results:
+    - "demonstrate"
+    - "prove"
+    - "establish"
+    - "show definitively"
+    - "confirm"
+  underclaim_verbs_in_results:
+    - "might suggest"
+    - "could potentially"
+    - "may possibly"
+  # SD vs SEM policy
+  error_reporting:
+    rule: "report SD for descriptive variability; SEM only for precision of mean estimate"
+    never: "SEM for error bars on individual data points (misleading)"
+  miqe_brief:
+    field: "biology/qpcr"
+    description: "MIQE for qPCR"
+    missing_if_absent:
+      - "primer sequences"
+      - "amplicon length"
+      - "PCR efficiency"
+      - "reference gene justification"
+
+# === AI-tell detection thresholds (for tool anti_ai_score) ===
+ai_tell_scoring:
+  weights:
+    avoided_verb_hit: 1.0
+    avoided_noun_hit: 1.0
+    filler_adverb_hit: 1.5         # these are dead giveaways
+    ai_opener_hit: 3.0
+    emdash_overuse_threshold: 2.0   # >2 em-dashes per 1000 chars → +0.5
+    sentence_length_uniformity: 1.0 # coefficient of variation low → +0.5
+  thresholds:
+    safe_max:    2.0      # total < safe_max → human-like
+    caution_max: 5.0      # safe_max <= total <= caution_max → edit-recommended
+                          # total > caution_max → rewrite-mandatory

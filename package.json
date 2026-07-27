@@ -1,0 +1,24 @@
+{
+  "name": "pi-paper-lab",
+  "version": "0.1.0",
+  "description": "Writing-style guardrails for scientific text in pi. Distilled from real Drosophila genetics papers. Anti-AI-tells, discipline voice, reporting standards enforcement.",
+  "type": "module",
+  "main": "extensions/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": ["./extensions/index.ts"]
+  },
+  "keywords": ["pi", "pi-coding-agent", "extension", "scientific-writing", "drosophila", "anti-ai-tells", "biology"],
+  "license": "MIT",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "js-yaml": "^4.1.0",
+    "typebox": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
