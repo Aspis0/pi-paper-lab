@@ -32,6 +32,54 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
+// When re-reading a .docx that was already processed:
+// 1. Parse the References section to extract DOIs per [N]
+// 2. Replace bare [N] / <sup>[N]</sup> in text with [N](doi:...)
+// 3. Strip the References section (finalizeDoc will regenerate it)
+// This PRESERVES old citations so new text can be added without losing them.
+function cleanExtractedDocx(text: string): string {
+  let cleaned = text;
+
+  // 1. Extract the References section (any heading format)
+  const refsMatch = cleaned.match(/(?:---+\s*\n+)?#{1,3}\s*References\s*\n([\s\S]*?)$/i)
+    ?? cleaned.match(/(?:---+\s*\n+)?\*{0,2}References\*{0,2}\s*\n([\s\S]*?)$/i);
+
+  const doiMap = new Map<number, string>();
+  if (refsMatch) {
+    const refsText = refsMatch[1];
+    // Parse each reference line: "N. Authors. Title. Journal. Year. doi:10.xxxx"
+    const refLines = refsText.split(/\n\n+/);
+    for (const line of refLines) {
+      const numMatch = line.match(/^\s*(\d+)\.\s/);
+      const doiMatch = line.match(/doi:(10\.[^\s\n]+)/i);
+      if (numMatch && doiMatch) {
+        doiMap.set(parseInt(numMatch[1]), doiMatch[1]);
+      }
+    }
+  }
+
+  // 2. Strip the References section entirely (finalizeDoc regenerates it)
+  cleaned = cleaned.replace(/\n*---+\n*#{1,3}\s*References[\s\S]*$/i, "");
+  cleaned = cleaned.replace(/\n*#{1,3}\s*References[\s\S]*$/i, "");
+  cleaned = cleaned.replace(/\n*---+\n*\*{0,2}References\*{0,2}[\s\S]*$/i, "");
+
+  // 3. Replace <sup>[N]</sup> → [N](doi:...) if we have the DOI, else just [N]
+  cleaned = cleaned.replace(/<sup>\[(\d+)\]<\/sup>/g, (m, num) => {
+    const doi = doiMap.get(parseInt(num));
+    return doi ? `[${num}](doi:${doi})` : `[${num}]`;
+  });
+
+  // 4. Replace bare [N] (not followed by '(') → [N](doi:...) if we have the DOI
+  cleaned = cleaned.replace(/\[(\d+)\](?!\()/g, (m, num) => {
+    const doi = doiMap.get(parseInt(num));
+    return doi ? `[${num}](doi:${doi})` : `[${num}]`;
+  });
+
+  // 5. Clean up multiple blank lines
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+  return cleaned.trim() + "\n";
+}
+
 // === Pipeline 1: /paper-cite ===
 // Extract text from .docx using docx CLI, or read .md directly
 function readInputFile(path: string): string {
@@ -50,7 +98,7 @@ function readInputFile(path: string): string {
           throw e;
         }
       }
-      return result;
+      return cleanExtractedDocx(result);
     } catch (err: any) {
       if (err.message?.includes("corrupted")) throw err;
       throw new Error(`Cannot read .docx file. Make sure it exists and is a valid Word document. Error: ${err?.message}`);
