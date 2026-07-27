@@ -147,55 +147,90 @@ export async function pipelineRewrite(
       ].join("\n")
     : "";
 
-  const prompt = buildCiteMarkPrompt(rewrittenPath, rewritten, rewriteInstructions);
+  const prompt = buildCiteMarkPrompt(rewrittenPath, rewritten, rewriteInstructions, true);
   pi.sendUserMessage(`${header}${flaggedInfo}\n\n${prompt}`, { deliverAs: "followUp" });
 }
 
 // === Build the LLM cite-mark prompt ===
-function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string): string {
-  return [
-    `I need you to add citations to this paper draft: ${filePath}`,
-    ``,
-    rewriteInstructions ? `Additional rewrite instructions: ${rewriteInstructions}` : "",
-    ``,
-    `Here is the draft text:`,
-    `---`,
-    text,
-    `---`,
-    ``,
-    `Do the following steps ALL IN ONE TURN. Do NOT stop between steps. Do NOT ask for confirmation. Do all 6 steps now:`,
-    ``,
-    `1. CITE-MARK: Read every sentence. Identify ALL claims that need a citation.`,
+function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean): string {
+  const baseSteps = [
+    `CITE-MARK: Read every sentence. Identify ALL claims that need a citation.`,
     `   A claim needs a citation if it states a fact, definition, prior finding,`,
     `   statistical result, or technique description. Mark each with [CITE:topic_description].`,
     `   The number of claims depends on text length — typically one per factual sentence.`,
     `   Do NOT under-cite. Do NOT mark: opinions, your own study results, section headers.`,
     ``,
-    `2. BATCH SEARCH: For EACH [CITE:topic], call the find_citation tool.`,
+    `BATCH SEARCH: For EACH [CITE:topic], call the find_citation tool.`,
     `   Call them in parallel (batch) when possible. Pick the best candidate`,
     `   (prefer primary research papers, not reviews or figure captions).`,
     `   Use crossref_lookup to verify the DOI gives the right paper.`,
     ``,
-    `3. ASSIGN: Replace each [CITE:topic] with [N](doi:10.xxxx).`,
+    `ASSIGN: Replace each [CITE:topic] with [N](doi:10.xxxx).`,
     `   For DOIs with special chars (parentheses), use angle brackets:`,
     `   [N](<doi:10.1016/s0896-6273(00)80701-1>)`,
     `   Number citations sequentially [1], [2], [3]...`,
     ``,
-    `4. BIBLIOGRAPHY: After assigning all DOIs, use bash to generate the References section:`,
+    `BIBLIOGRAPHY: After assigning all DOIs, use bash to generate the References section:`,
     `   Run this bash command (replace FILE with your resolved draft path):`,
-    `   node --experimental-strip-types -e "import('/path/to/pi-paper-lab/src/citations.ts').then(async ({generateBibliography, formatBibliography}) => { const fs=require('fs'); const text=fs.readFileSync('FILE','utf8'); const {bibliography}=await generateBibliography(text, new Map()); fs.writeFileSync('FILE', text + '\\n\\n' + formatBibliography(bibliography)); console.log('Bibliography:', bibliography.length, 'entries'); });"`,
+    `   node --experimental-strip-types -e "import('C:/Users/gualt/Desktop/pi-paper-lab/src/citations.ts').then(async ({generateBibliography, formatBibliography}) => { const fs=require('fs'); const text=fs.readFileSync('FILE','utf8'); const {bibliography}=await generateBibliography(text, new Map()); fs.writeFileSync('FILE', text + '\\n\\n' + formatBibliography(bibliography)); console.log('Bibliography:', bibliography.length, 'entries'); });"`,
     ``,
-    `5. WORD: Use bash to generate the .docx using the extension's generateWord function:`,
+    `WORD: Use bash to generate the .docx using the extension's generateWord function:`,
     `   export PATH="$HOME/.local/bin:$PATH" && node --experimental-strip-types -e "import('C:/Users/gualt/Desktop/pi-paper-lab/src/pipeline.ts').then(({generateWord}) => { const r = generateWord('FILE.md', 'FILE.docx'); if (r.error) console.log('Error:', r.error); else console.log('Word:', r.docxPath, 'links:', r.footnoteCount); });"`,
     `   generateWord automatically: strips DOI from text, makes [N] superscript, adds cross-reference links.`,
-    `   The rm -f is not needed — generateWord handles overwrite.`,
     `   Do NOT read or cat the .docx file — it's binary.`,
     ``,
-    `6. Report: Tell the user the path to the .docx file.`,
-    ``,
-    `Start now with step 1 (cite-mark). Write the marked draft to ${filePath.replace(/\.md$/, ".marked.md")}.`,
-    `Then proceed through all steps until you generate the .docx file.`,
-  ].filter(Boolean).join("\n");
+    `REPORT: Tell the user the path to the .docx file.`,
+  ];
+
+  if (includeRewrite) {
+    const rewriteSteps = [
+      `REWRITE + AI DETECTION LOOP:`,
+      `   a) Rewrite the entire draft for human scientific voice. This is a Drosophila genetics paper.`,
+      `      Rewrite for clarity, flow, and natural variation — NOT just search-and-replace specific phrases.`,
+      `      ${rewriteInstructions ? `Additional instructions: ${rewriteInstructions}` : ""}`,
+      `   b) Call the ai_detect_statistical tool on your rewritten text. This gives you an AI score (0-100%).`,
+      `   c) Call the anti_ai_score tool on your rewritten text. This flags specific AI-tell sentences.`,
+      `   d) If AI score > 40% OR there are flagged sentences: rewrite those sentences to be more human.`,
+      `      Vary sentence structure. Use concrete specifics. Cut filler. Restructure paragraphs.`,
+      `   e) Re-test: call ai_detect_statistical again on the new version.`,
+      `   f) REPEAT steps d-e until AI score < 40% or you have done 3 iterations.`,
+      `   g) Write the final rewritten draft to ${filePath.replace(/\.md$/, ".rewritten.md")}.`,
+      `   Report the initial and final AI scores to the user.`,
+      ``,
+    ];
+    const allSteps = [...rewriteSteps, ...baseSteps];
+    const numbered = allSteps.map((s, i) => `${i + 1}. ${s}`);
+    return [
+      `I need you to rewrite and add citations to this paper draft: ${filePath}`,
+      ``,
+      `Here is the draft text:`,
+      `---`,
+      text,
+      `---`,
+      ``,
+      `Do the following ${allSteps.length} steps ALL IN ONE TURN. Do NOT stop between steps. Do NOT ask for confirmation.`,
+      ``,
+      ...numbered,
+      ``,
+      `Start now with step 1 (rewrite + AI detection loop). Then proceed through ALL steps. Do NOT skip any step.`,
+    ].join("\n");
+  } else {
+    const numbered = baseSteps.map((s, i) => `${i + 1}. ${s}`);
+    return [
+      `I need you to add citations to this paper draft: ${filePath}`,
+      ``,
+      `Here is the draft text:`,
+      `---`,
+      text,
+      `---`,
+      ``,
+      `Do the following ${baseSteps.length} steps ALL IN ONE TURN. Do NOT stop between steps. Do NOT ask for confirmation.`,
+      ``,
+      ...numbered,
+      ``,
+      `Start now with step 1 (cite-mark). Then proceed through ALL steps. Do NOT skip any step.`,
+    ].join("\n");
+  }
 }
 
 // === Generate .docx from a resolved Markdown file ===
@@ -231,7 +266,7 @@ export function generateWord(
 
   // Step 1: Create .docx
   try {
-    execFileSync("docx", ["create", docxPath, "--from", tempMd], { stdio: "pipe" });
+    execFileSync("docx", ["create", docxPath, "--from", tempMd, "--force"], { stdio: "pipe" });
   } catch (err: any) {
     try { unlinkSync(tempMd); } catch {}
     return { docxPath: "", error: err?.message ?? String(err) };
