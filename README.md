@@ -93,6 +93,21 @@ Interactive menu for Serper API key + domain selection.
 /paper-cite MyDraft.docx
 ```
 
+### Study phase
+
+`/paper-write` and `/paper-rewrite` start with a **study phase**: the LLM
+searches the literature (Serper Scholar, web_search, fetch_content) to
+ground the draft in real papers. Findings are saved to `study-notes.md`
+next to the draft.
+
+```
+~/Desktop/paper-write-output.md            ← the draft
+~/Desktop/paper-write-output.study-notes.md ← the study notes (topic, key concepts, candidate refs)
+```
+
+If all searches fail, the pipeline proceeds with `[CITATION NEEDED]`
+markers — the study phase NEVER blocks.
+
 ## Platform Support
 
 - **macOS** — fully supported (Homebrew, npm global, bun)
