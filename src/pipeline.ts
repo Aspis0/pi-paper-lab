@@ -251,7 +251,11 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
        ``].join("\n")
     : "";
 
-  const startStep = includeRewrite ? 2 : 1;
+  const startStep = includeRewrite ? 3 : 1;
+
+  const studyBlock = includeRewrite
+    ? `STEP 1 — CONTEXT REFRESH (optional, only if topic is unclear):\n   If the draft's topic is ambiguous or you need recent literature context, call find_citation 1-3 times. Most rewrites skip this — proceed to STEP 2 if topic is clear.\n\n`
+    : "";
 
   return [
     `Paper draft: ${filePath}`,
@@ -261,6 +265,7 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
     `---`,
     ``,
     rewriteBlock,
+    studyBlock,
     `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch parallel). Assign [N](<doi:10.xxxx>) sequentially — ALWAYS use angle brackets around the doi, even for simple DOIs. Write the resolved file to ${filePath}.`,
     `STEP ${startStep + 1} — FINALIZE: Run this bash command (it does bibliography + superscript + .docx automatically):`,
     `   ${finalizeCmd}`,
