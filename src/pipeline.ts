@@ -208,14 +208,11 @@ export async function pipelineWrite(
   const outPath = join(homedir(), "Desktop", "paper-write-output.md");
 
   const prompt = [
-    `Write new text for a Drosophila genetics paper based on this description:`,
+    `Write new text for a biology paper based on this description:`,
     ``,
     `"${description}"`,
     ``,
-    `Follow the Drosophila genetics voice rules (already in your system prompt):`,
-    `- First mention: Drosophila melanogaster. Then: the fly, Drosophila, flies.`,
-    `- Neuroblast, not "neural stem cell". GAL4, not Gal4.`,
-    `- MARCM → Lee and Luo, 1999, Neuron 22:451-461.`,
+    `Follow the domain-specific voice rules in your system prompt (species, nomenclature, reporting standards are all defined by the active domain YAML).`,
     `- Reporting: n=X per group, statistical test, p-value, effect size, 95% CI.`,
     `- No AI-tells: no "delve", "leverage", "elucidate", "crucially", "notably".`,
     `- Paragraphs of 3-6 sentences. Vary sentence length.`,
@@ -239,7 +236,7 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
 
   const rewriteBlock = includeRewrite
     ? [`STEP 1 — REWRITE + AI CHECK:`,
-       `Rewrite the draft for human scientific voice (Drosophila genetics paper). ${rewriteInstructions ? "Extra: " + rewriteInstructions : ""}`,
+       `Rewrite the draft for human scientific voice (follow your domain's voice rules). ${rewriteInstructions ? "Extra: " + rewriteInstructions : ""}`,
        `Call ai_detect_statistical on your rewrite. If score >40%, rewrite the flagged sentences and re-test. Max 3 rounds.`,
        `Write the result to ${filePath.replace(/\.md$/, ".rewritten.md")}. Report initial→final AI score.`,
        ``].join("\n")

@@ -47,7 +47,7 @@ export default function (pi: ExtensionAPI) {
   // Make resolveDomain available to other parts of the extension
   (globalThis as any).__piPaperLab = { lex, domains, resolveDomain };
 
-  // === 1. Inject Drosophila voice into the system prompt on every turn ===
+  // === 1. Inject domain-specific voice into the system prompt on every turn ===
   pi.on("before_agent_start", async (event, _ctx) => {
     return {
       systemPrompt: `${event.systemPrompt}\n\n${injection}`,

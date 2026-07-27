@@ -82,7 +82,7 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
     name: "silent_rewrite",
     label: "Silent rewrite for AI-tells",
     description:
-      "Rewrite a passage to remove AI-tells and Drosophila-voice violations. Connectors compressed, fillers deleted, avoided verbs mapped to neutral. Returns the rewritten text and a stats report.",
+      "Rewrite a passage to remove AI-tells and domain-specific voice violations. Connectors compressed, fillers deleted, avoided verbs mapped to neutral. Returns the rewritten text and a stats report.",
     parameters: Type.Object({
       text: Type.String(),
     }),
@@ -107,7 +107,7 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
     name: "imrad_check",
     label: "IMRaD structure check",
     description:
-      "Check a Markdown draft for IMRaD presence and Drosophila-specific Methods/Results content (n, statistical test, software version, sex, age, genotype, ethics, data availability, p-values, effect sizes, confidence intervals, figure references).",
+      "Check a Markdown draft for IMRaD presence and domain-specific Methods/Results content (n, statistical test, software version, sex, age, genotype, ethics, data availability, p-values, effect sizes, confidence intervals, figure references).",
     parameters: Type.Object({
       text: Type.String(),
     }),

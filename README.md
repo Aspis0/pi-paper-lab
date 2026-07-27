@@ -1,13 +1,46 @@
 # pi-paper-lab
 
-A [pi coding agent](https://github.com/earendil-works/pi-coding-agent) extension for writing *Drosophila* genetics papers in the style of eLife, Genetics, G3, PLOS Genetics, Development, and Nature Methods.
+A [pi coding agent](https://github.com/earendil-works/pi-coding-agent) extension for writing scientific papers in any biology field.
 
 ## Features
 
-- **Anti-AI rewrite** — removes AI-tell phrases, calibrates hedging, enforces Drosophila voice (neuroblast not "neural stem cell", GAL4 not Gal4, MARCM → Lee & Luo 1999, RRIDs, balancers)
+- **Anti-AI rewrite** — removes AI-tell phrases, calibrates hedging, enforces scientific voice (per domain YAML)
 - **Automatic citations** — LLM identifies claims, searches Serper Scholar + CrossRef, assigns Vancouver-style `[N]` citations with DOIs
-- **Word output** — generates `.docx` with superscript `[N]` citations, cross-reference hyperlinks (click [3] → jumps to ref 3), and a References section
-- **AI detection** — 7 statistical features (burstiness, n-gram entropy, lexical diversity, punctuation, function words, starter diversity, lexical sophistication) + lexicon-tell scoring. Optional Copyleaks API integration.
+- **Word output** — generates `.docx` with superscript `[N]` citations, cross-reference hyperlinks, and a References section
+- **AI detection** — 7 statistical features (burstiness, n-gram entropy, lexical diversity, etc.) + lexicon-tell scoring. Optional Copyleaks API.
+- **Domain-agnostic** — data-driven via YAML profiles. Zero hardcoded domain names.
+
+## Domains
+
+Domains are YAML files in `data/domains/`. **Adding a domain = creating one file. Zero code changes.**
+
+### Built-in domains (discovered at runtime)
+
+The extension scans `data/domains/*.yaml` on startup. Current domains:
+
+| Key | Name | Key features |
+|---|---|---|
+| `drosophila-genetics` | Drosophila genetics | GAL4, MARCM, balancers, neuroblast, BDSC, ARRIVE-exempt |
+| `mouse-mammalian` | Mouse / Mammalian | MGI nomenclature, ARRIVE 2.0 essentials, JAX strains |
+| `cancer-biology` | Cancer biology | Cell lines (MCF-7, A549), MIQE, Kaplan-Meier, HR |
+| `c-elegans` | C. elegans | Brenner nomenclature, CGC strains, balancers (hT2, nT1) |
+| `neuroscience` | Neuroscience | Patch-clamp, two-photon, brain regions, GCaMP |
+| `general-biology` | General biology | Minimal — only common rules |
+
+### Create a custom domain
+
+Create `data/domains/my-field.yaml`:
+
+```yaml
+name: "My research field"
+detect_keywords: [myfield, "my model"]
+nomenclature:
+  - rule: "My specific naming rule"
+voice:
+  methods: "HIGHEST assertiveness. Detail strain, sex, age."
+```
+
+Restart pi or `/reload`. The new domain appears in `/paper-lab` → option 4.
 
 ## Install
 
@@ -16,8 +49,6 @@ A [pi coding agent](https://github.com/earendil-works/pi-coding-agent) extension
 **macOS:**
 ```bash
 npm install -g bun-docx
-# or with bun:
-bun install -g bun-docx
 ```
 
 **Windows (Git Bash):**
@@ -34,53 +65,16 @@ Sign up at https://serper.dev (free tier: 2,500 searches/month).
 
 ```bash
 cd ~/.pi/agent/extensions
-git clone https://github.com/gualt/pi-paper-lab.git
+git clone https://github.com/Aspis0/pi-paper-lab.git
 ```
 
-### 4. Configure API keys
+### 4. Configure
 
-Inside pi, run:
-```
-/paper-lab
-```
-This opens an interactive menu to set your Serper and Copyleaks API keys.
-
-## Usage
-
-### Add citations to a draft
-
-```
-/paper-cite C:/Users/gualt/Desktop/MyPaper.docx
-```
-or
-```
-/paper-cite ~/Desktop/MyPaper.md
-```
-
-The pipeline:
-1. Extracts text (if .docx, uses `docx read`)
-2. LLM identifies claims needing citations → `[CITE:topic]` markers
-3. Batch search: Serper Scholar + CrossRef for each claim
-4. Assigns `[N](doi:10.xxxx)` inline
-5. Generates Vancouver bibliography (References section)
-6. Creates `.docx` with superscript `[N]` + cross-reference hyperlinks
-
-### Rewrite + add citations
-
-```
-/paper-rewrite ~/Desktop/MyPaper.md "tighten the introduction, remove hedging"
-```
-
-The pipeline:
-1. Silent rewrite (anti-AI lexicon → removes AI-tells, calibrates voice)
-2. AI detection → rewrite loop (detect → rewrite → re-detect)
-3. Everything from `/paper-cite` above
-
-### Manage API keys
-
+Inside pi:
 ```
 /paper-lab
 ```
+Interactive menu for Serper API key + domain selection.
 
 ## Commands
 
@@ -88,20 +82,16 @@ The pipeline:
 |---|---|
 | `/paper-cite <file>` | Add citations to a draft (.md or .docx) |
 | `/paper-rewrite <file> [instructions]` | Rewrite anti-AI + add citations |
-| `/paper-lab` | Manage API keys interactively |
+| `/paper-write <description>` | Generate new text from a description |
+| `/paper-lab` | Manage API keys + domain selection |
 
-## LLM Tools (auto-registered)
+## Usage
 
-| Tool | Description |
-|---|---|
-| `find_citation(topic)` | Search Serper Scholar + CrossRef |
-| `crossref_lookup(doi)` | Fetch DOI metadata → Vancouver citation |
-| `scholar_search(query)` | Direct Serper Scholar search |
-| `verify_citation(claim, doi)` | Check if a DOI supports a claim |
-| `ai_detect(text)` | AI detection (Copyleaks API or local) |
-| `anti_ai_score(text)` | Lexicon-based AI-tell score |
-| `claim_strength_check(sentence)` | Grade claim strength (n, p, effect size) |
-| `sloppy_scan(text)` | Detect vague quantifiers, causal overclaim |
+```
+/paper-write "write the introduction for a paper about cancer cachexia"
+/paper-rewrite MyDraft.md
+/paper-cite MyDraft.docx
+```
 
 ## Platform Support
 
@@ -113,28 +103,28 @@ The pipeline:
 
 ```
 pi-paper-lab/
-├── extensions/index.ts          # entry point: commands + tools + system prompt
+├── extensions/index.ts          # entry: commands + tools + system prompt
 ├── src/
-│   ├── anti-ai-lexicon.ts       # 400+ YAML lexicon → score + silentRewrite
-│   ├── statistical-ai-detector.ts  # 7 statistical features
-│   ├── ai-detector.ts           # Copyleaks API + local fallback
-│   ├── pipeline.ts              # /paper-cite + /paper-rewrite pipelines
-│   ├── citations.ts             # markClaims + resolveCitation + bibliography
-│   ├── crossref.ts              # CrossRef REST API + normalizeWork
-│   ├── serper-scholar.ts        # Serper.dev Scholar API client
-│   ├── config.ts                # /paper-lab API key manager
-│   ├── system-injection.ts      # Drosophila voice prompt builder
-│   ├── word-builder.ts          # Markdown → .docx via bun-docx CLI
-│   ├── claim-strength.ts        # n/p/replicates grading
-│   ├── sloppy-detector.ts       # vague quantifier detection
-│   ├── cite-verify.ts           # claim ↔ reference verification
-│   ├── commands.ts              # internal helper commands
-│   ├── tools.ts                 # LLM tool registration
-│   ├── footnote-injector.ts     # [N] → Word footnote (placeholder)
-│   └── imrad.ts                 # IMRaD structural validator
-├── data/drosophila-lexicon.yaml # 400+ lexicon entries
-├── tests/                       # 67 unit tests
-└── package.json
+│   ├── domains.ts               # discoverDomains, detectDomain (filesystem-driven)
+│   ├── system-injection.ts      # domain-driven voice prompt builder
+│   ├── anti-ai-lexicon.ts       # 400+ lexicon + silent rewrite
+│   ├── pipeline.ts              # /paper-cite + /paper-rewrite + /paper-write
+│   ├── citations.ts             # markClaims + bibliography
+│   ├── crossref.ts              # CrossRef API
+│   ├── serper-scholar.ts        # Serper API
+│   ├── config.ts                # /paper-lab API key + domain manager
+│   ├── statistical-ai-detector.ts
+│   └── ...
+├── data/
+│   ├── lexicon-common.yaml      # SHARED (AI-tells, fillers, voice, numbers)
+│   └── domains/                 # YAML profiles, one per domain
+│       ├── drosophila-genetics.yaml
+│       ├── mouse-mammalian.yaml
+│       ├── cancer-biology.yaml
+│       ├── c-elegans.yaml
+│       ├── neuroscience.yaml
+│       └── general-biology.yaml
+└── tests/                       # 66 unit tests
 ```
 
 ## License
