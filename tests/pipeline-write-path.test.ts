@@ -64,3 +64,37 @@ test("resolveDefaultOutPath: empty or non-alphanumeric description falls back to
   assert.ok(out1.endsWith(pathSep + "paper.md"), `out1=${out1}`);
   assert.ok(out2.endsWith(pathSep + "paper.md"), `out2=${out2}`);
 });
+
+test("resolveDefaultOutPath: hyphenated abbreviations are preserved (MED-2 fix)", () => {
+  // Split only on whitespace, not on hyphens, so "T-to-C" stays as "t-to-c"
+  // instead of being split into ["t", "to", "c"] (all < 3 chars, all filtered).
+  const out1 = resolveDefaultOutPath("T-to-C conversion in Drosophila", { outputDir: "/tmp/test-h" });
+  const out2 = resolveDefaultOutPath("A-to-G conversion in Drosophila", { outputDir: "/tmp/test-h" });
+  const stem1 = out1.split(pathSep).pop()!.replace(".md", "");
+  const stem2 = out2.split(pathSep).pop()!.replace(".md", "");
+  // "t-to-c" and "a-to-g" must be preserved as distinct tokens
+  assert.ok(stem1.includes("t-to-c"), `expected 't-to-c' in stem1, got: ${stem1}`);
+  assert.ok(stem2.includes("a-to-g"), `expected 'a-to-g' in stem2, got: ${stem2}`);
+  assert.notEqual(stem1, stem2, "hyphenated abbreviations must produce different slugs");
+  // "IL-6" is preserved as "il-6" (single token, not split)
+  const out3 = resolveDefaultOutPath("IL-6 signaling in cancer", { outputDir: "/tmp/test-h" });
+  const stem3 = out3.split(pathSep).pop()!.replace(".md", "");
+  assert.ok(stem3.includes("il-6"), `expected 'il-6' in stem3, got: ${stem3}`);
+});
+
+test("resolveDefaultOutPath: no collisions across 6 audit descriptions", () => {
+  const descriptions = [
+    "Write the introduction for a paper on cancer cachexia",
+    "Write the introduction for a paper on insulin signaling",
+    "Write the methods section about the Drosophila model",
+    "Write the results section about the Drosophila model",
+    "Write about cancer cachexia in Drosophila",
+    "Write about insulin signaling in Drosophila",
+  ];
+  const slugs = descriptions.map((d) => {
+    const out = resolveDefaultOutPath(d, { outputDir: "/tmp/test-col" });
+    return out.split(pathSep).pop()!.replace(".md", "");
+  });
+  const unique = new Set(slugs);
+  assert.equal(unique.size, slugs.length, `expected 6 unique slugs, got ${unique.size}: ${slugs.join(", ")}`);
+});

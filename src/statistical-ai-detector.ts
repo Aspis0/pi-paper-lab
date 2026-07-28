@@ -147,7 +147,10 @@ function measureLexicalDiversity(text: string, wordCount: number): StatisticalFe
     aiBl = 0.40;
     score = Math.max(0, Math.min(1, (0.60 - ttr) / 0.25));
   }
-  return { name: "lexical_diversity", score, rawValue: ttr, humanBaseline: humanBl, aiBaseline: aiBl, description: `TTR=${ttr.toFixed(3)} (human≈${humanBl}, AI≈${aiBl})` };
+  const note = ttr >= humanBl
+    ? " (TTR too high for short-text discrimination)"
+    : "";
+  return { name: "lexical_diversity", score, rawValue: ttr, humanBaseline: humanBl, aiBaseline: aiBl, description: `TTR=${ttr.toFixed(3)} (human≈${humanBl}, AI≈${aiBl})${note}` };
 }
 
 // === Feature 4: Punctuation analysis (em-dash, semicolons) ===

@@ -279,14 +279,14 @@ const SLUG_STOP_WORDS = new Set([
   "also", "will", "can", "use", "make", "need", "want", "please", "text",
   "generate", "create", "produce", "draft", "part", "here", "describe",
   "following", "below", "after", "before", "while", "when", "where",
-  "write", "write.", "an", "a", "of",
+  "write",
 ]);
 
 function slugifyDescription(description: string): string {
   const tokens = description
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
-    .split(/[\s-]+/)
+    .split(/\s+/) // Split only on whitespace, preserve hyphenated compounds
     .filter((w) => w.length >= 3 && !SLUG_STOP_WORDS.has(w))
     .slice(0, 5);
   if (tokens.length === 0) return "paper";
