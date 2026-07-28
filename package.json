@@ -46,7 +46,7 @@
   },
   "homepage": "https://github.com/Aspis0/pi-paper-lab#readme",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.7"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "*",

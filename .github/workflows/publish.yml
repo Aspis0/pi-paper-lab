@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'   # LTS; --experimental-strip-types requires Node >= 22.7
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
