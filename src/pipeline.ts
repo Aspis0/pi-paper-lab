@@ -423,16 +423,25 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
     console.error("[paper-lab-finalize] WARN: failed to build CITATIONS ALREADY PRESENT block:", err?.message ?? err);
   }
 
-  // v0.7.0 (M2.2): disambiguation / ask-when-unsure block. Tells the
-  // LLM when to call find_citation with a `claim` parameter (triggers
-  // the AMBIGUOUS menu), and how to handle the three resolve paths:
-  // emit a citation, ask the user, or mark the gap with [CITATION NEEDED].
+  // v0.7.0 (M2.2 + M3): disambiguation, anti-hallucination, mandatory
+  // verification. The block is the most important contract between the
+  // LLM and our resolve pipeline; keep the wording tight and explicit.
   const clarifyBlock = [
-    `DISAMBIGUATION (M2) — when you are NOT sure:`,
-    `  1. For a topic with multiple plausible candidates, call find_citation with a \`claim\` field set to the sentence you need to back up. The tool will append a "CLARIFICATIONS NEEDED" menu you must present to the user.`,
-    `  2. Present the menu as-is to the user. Do NOT pick a candidate yourself.`,
-    `  3. After the user picks (or you cannot reach them), use the chosen candidate. If the user cannot decide, you may also: emit \`[ASK: short, single-line question]\` inline in the prose to ask the user later, OR emit \`[CITATION NEEDED: topic]\` to mark the gap honestly.`,
-    `  4. NEVER invent a DOI. If find_citation returns no candidates, emit \`[CITATION NEEDED: topic]\` — do not guess.`,
+    `━━━ DISAMBIGUATION (M2) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    `When you are NOT sure between multiple candidates:`,
+    `  1. Call find_citation with a \`claim\` field set to the sentence you need to back up. The tool appends a "CLARIFICATIONS NEEDED" menu you MUST present to the user verbatim — do NOT pick a candidate yourself.`,
+    `  2. If the user cannot decide or you cannot reach them: emit \`[ASK: short, single-line question]\` inline in the prose, OR \`[CITATION NEEDED: topic]\` to mark the gap honestly.`,
+    ``,
+    `━━━ ANTI-HALLUCINATION (M3) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    `Every DOI you write MUST appear in a find_citation candidate above. The DOI INVARIANT:`,
+    `  DOI_used(X) → X ∈ {DOIs returned by find_citation OR DOIs in CITATIONS ALREADY PRESENT}`,
+    `If find_citation returns no candidate, emit \`[CITATION NEEDED: topic]\`. DOIs you invent are an automatic test failure and the paper will be rejected.`,
+    ``,
+    `━━━ MANDATORY VERIFY_CITATION (M3) ━━━━━━━━━━━━━━━━━━━━━━━`,
+    `For every [N] you emit, you MUST call verify_citation(claim_sentence, doi) before the FINALIZE step. The tool returns SUPPORTS / REFUTES / UNCLEAR.`,
+    `  - SUPPORTS → keep the citation.`,
+    `  - REFUTES → that DOI is wrong. Pick a different candidate (or emit [CITATION NEEDED]).`,
+    `  - UNCLEAR → the abstract is missing or ambiguous. Prefer a different candidate; if none, emit [CITATION NEEDED].`,
     ``,
   ].join("\n");
 
@@ -448,11 +457,18 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
     ``,
     rewriteBlock,
     studyBlock,
-    `STEP ${startStep} — CITE: Mark every factual claim that is NOT already cited with [CITE:topic]. Read the CITATIONS ALREADY PRESENT block above carefully — every [N] listed there is already valid; do NOT re-search or re-mark those claims. Call find_citation ONLY for genuinely new claims (batch parallel). For each topic, pass \`claim\` to find_citation so the disambiguator can score candidates properly. Assign NEW [N] sequentially starting from max(existing)+1 (the block tells you the current maximum). ALWAYS use angle brackets around the DOI: [N](<doi:10.xxxx>). Write the resolved file to ${filePath}.`,
-    `STEP ${startStep + 1} — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
+    `━━━ CITE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    `For every factual claim NOT already cited in the CITATIONS ALREADY PRESENT block, call find_citation with \`claim\` set to the claim sentence (triggers disambiguation). Pass parallel batches. Assign NEW [N] sequentially starting from max(existing)+1. ALWAYS use angle brackets: [N](<doi:10.xxxx>).`,
+    `After ALL [N] are assigned, run verify_citation(claim, doi) for every one (mandatory, anti-hallucination guard). Replace REFUTES/UNCLEAR DOIs or emit [CITATION NEEDED].`,
+    `Write the resolved file to ${filePath}.`,
+    ``,
+    `━━━ FINALIZE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    `Run this shell command (does bibliography + superscript + .docx automatically):`,
     `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}${verifyAll ? " --verify-all" : ""}`,
-    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry. To force fresh DOI resolution (bypass cache), add \`--no-cache\` at the end. To verify ALL citations (including ones with cached DOIs), add \`--verify-all\`.`,
-    `STEP ${startStep + 2} — REPORT: Tell the user the .docx path. Do NOT read the .docx (binary).`,
+    `If "paper-lab-finalize not installed" appears, run \`pi install npm:pi-paper-lab\` first. Pass \`--no-cache\` to force fresh DOI resolution; pass \`--verify-all\` to re-fetch every DOI even with cache.`,
+    ``,
+    `━━━ REPORT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    `Tell the user the .docx path. Do NOT read the .docx (binary).`,
     ``,
     `Do ALL steps in ONE turn. Do not stop between steps.`,
   ].filter(Boolean).join("\n");

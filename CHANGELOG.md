@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.7.0-alpha.6 — M3 prompt improvements
+
+### Tightened
+
+- **Heavy separators (`━━━`)** replace free-form `STEP N —` lines for
+  visual section breaks in the prompt.
+- The prompt is shorter overall (compact instructions, fewer
+  repetitions between blocks).
+
+### Added
+
+- **`ANTI-HALLUCINATION (M3)` block**: explicit `DOI INVARIANT` —
+  every DOI used in `[N](<doi:X>)` must appear in either a
+  `find_citation` candidate returned above OR the CITATIONS ALREADY
+  PRESENT block. DOIs that the LLM invents are an automatic test
+  failure.
+- **`MANDATORY VERIFY_CITATION (M3)` block**: the LLM must call
+  `verify_citation(claim_sentence, doi)` for every [N] it emits,
+  before the FINALIZE step. SUPPORTS → keep; REFUTES / UNCLEAR →
+  pick a different candidate or emit `[CITATION NEEDED]`.
+- The CITE step explicitly tells the LLM to pass `claim` to
+  `find_citation` so the M2.2 disambiguator runs.
+- **`tests/prompt-m3.test.ts`** (7 cases): the new M3 blocks are
+  present, the M2 disambiguation block is still there, the CITE
+  step references `claim` and `verify_citation`, and the prompt
+  stays under a sane character budget.
+
 ## v0.7.0-alpha.5 — M2.2 ask-when-unsure integration
 
 ### Added

@@ -27,7 +27,7 @@ test("buildCiteMarkPrompt: includes the disambiguation block", () => {
   assert.match(prompt, /\[CITATION NEEDED: topic\]/);
   assert.match(prompt, /\[ASK: short, single-line question\]/);
   // The CITE step must now mention the `claim` parameter for find_citation.
-  assert.match(prompt, /pass `claim` to find_citation/);
+  assert.match(prompt, /call find_citation with `claim`/);
 });
 
 // === [ASK:question] integration with finalizeDoc ===
