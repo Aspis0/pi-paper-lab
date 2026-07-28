@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { loadConfig } from "./config.ts";
 import { fileURLToPath } from "node:url";
 
 // Ensure docx CLI (bun-docx) is on PATH — works on Windows and macOS
@@ -123,15 +124,25 @@ export async function pipelineCite(
   const existingCitations = (text.match(CITE_WITH_DOI) ?? []).length;
   const existingMarkers = (text.match(CITE_MARKER) ?? []).length;
 
+  // Backend-aware step description (exa, serper, both, auto)
+  const backend = loadConfig().citation_backend ?? "serper";
+  const searchDesc: Record<string, string> = {
+    serper: "search Serper Scholar + CrossRef in batch",
+    exa: "search Exa.ai publications + CrossRef in batch",
+    both: "search Serper Scholar AND Exa.ai in parallel, then CrossRef in batch",
+    auto: "search Exa.ai first, fall back to Serper Scholar if Exa fails, then CrossRef in batch",
+  };
+
   const header = [
     `=== /paper-cite pipeline ===`,
     `File: ${inputPath}`,
     `Existing citations: ${existingCitations}`,
     `Unresolved [CITE:topic] markers: ${existingMarkers}`,
+    `Citation backend: ${backend}`,
     instructions ? `User instructions: ${instructions}` : "",
     ``,
     `Step 1: I will identify claims that need citations (LLM cite-mark).`,
-    `Step 2: For each claim, I will search Serper Scholar + CrossRef in batch.`,
+    `Step 2: For each claim, I will ${searchDesc[backend]}.`,
     `Step 3: I will assign [N](doi:...) inline.`,
     `Step 4: I will generate the References section and produce a .docx.`,
   ].join("\n");
