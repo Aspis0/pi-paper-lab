@@ -26,7 +26,7 @@ if (!process.env.PATH?.includes("local/bin") && !process.env.PATH?.includes("hom
 }
 import { loadLexicon, silentRewrite, scoreText } from "./anti-ai-lexicon.ts";
 import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER, CITE_WITH_DOI } from "./citations.ts";
-import { lookupDoi, formatVancouver } from "./crossref.ts";
+import { lookupDoi, formatVancouver, type CrossRefWork } from "./crossref.ts";
 import { detectAI, detectRewriteLoop, formatDetectionReport, type AIDetectionResult } from "./ai-detector.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -443,12 +443,37 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
   ].filter(Boolean).join("\n");
 }
 
+// === cleanDoi: exported, idempotent, the single source of truth for DOI normalisation ===
+// Strips trailing punctuation and bracket artifacts that LLMs sometimes leave inside
+// malformed citation markers (e.g. `[13](doi:10.1242/dmm.049298.]` or `.],`).
+// Applied repeatedly until the string stops changing (idempotent).
+// `)` is NOT stripped because parentheses are valid characters inside real DOI strings
+// (e.g. `10.1016/S0896-6273(00)80701-1`).
+// Exported so tests can verify the normalisation directly without going through
+// finalizeDoc.
+export function cleanDoi(input: string): string {
+  let s = input.trim();
+  let prev: string;
+  do {
+    prev = s;
+    s = s.replace(/[\];,.]+$/, "");
+  } while (s !== prev);
+  return s.trim();
+}
+
 // === finalizeDoc: ONE function that does everything ===
 // Reads .md with [N](doi:...) → generates bibliography → strips DOI → superscript [N] → .docx
 // The LLM only needs to write the .md and call this.
 export function finalizeDoc(
   markdownPath: string,
-  opts?: { noCache?: boolean; verifyAll?: boolean },
+  opts?: {
+    noCache?: boolean;
+    verifyAll?: boolean;
+    // Dependency injection for tests. Production callers omit this and the
+    // real `lookupDoiSync` (which hits CrossRef) is used. Tests pass a
+    // fixture-backed function to keep the suite offline.
+    lookupDoi?: (doi: string) => CrossRefWork | null;
+  },
 ): { docxPath: string; bibliographyCount: number; error?: string } {
   const docxPath = markdownPath.replace(/\.md$/i, ".docx");
   let text = readFileSync(markdownPath, "utf-8");
@@ -464,6 +489,8 @@ export function finalizeDoc(
   // we still LOAD the sidecar (so we can know which [N] had a DOI), but we
   // ignore the cached Vancouver metadata for ones with inline DOIs.
   const trustCache = !noCache && !verifyAll;
+  // Dependency-injected resolver; defaults to the real CrossRef-backed one.
+  const resolveDoi = opts?.lookupDoi ?? lookupDoiSync;
 
   // 0. Strip any existing References section (idempotent — safe to re-run)
   // Step 0a: If the last line is exactly "## References" (no content after), remove it.
@@ -509,13 +536,6 @@ export function finalizeDoc(
   // Fallback: plain form [N](doi:XXX) — but only for DOIs without parens (safe)
   const re = /\[(\d+)\]\((?:<doi:\s*([^>\n]+)>|doi:\s*([^)>\n]+))\)/g;
   let m: RegExpExecArray | null;
-  // Strip trailing punctuation/artifacts that LLMs sometimes leave inside a
-  // malformed DOI marker. A closing square bracket is never part of a DOI;
-  // it is the Markdown link bracket from input such as `[13](doi:10.x].`.
-  // Remove punctuation first, then the bracket, so both `10.x].` and
-  // `10.x]` normalize to the same DOI. Do not strip `)` here: parentheses
-  // are valid characters inside real DOI strings.
-  const cleanDoi = (s: string) => s.trim().replace(/[;,.]+$/, "").replace(/\]$/, "").trim();
   while ((m = re.exec(text)) !== null) {
     const num = parseInt(m[1]);
     const doi = cleanDoi(m[2] ?? m[3] ?? "");
@@ -537,7 +557,7 @@ export function finalizeDoc(
       citations.delete(num);
     }
     try {
-      const work = lookupDoiSync(doi);
+      const work = resolveDoi(doi);
       if (work) {
         const authors = (work.author ?? []).map((a: any) =>
           a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ");
@@ -639,7 +659,7 @@ export function finalizeDoc(
         // bare-marker placeholder may already have occupied the same number.
         citations.delete(n);
         let work: any | null = null;
-        try { work = lookupDoiSync(normalizedDoi); } catch { /* keep DOI stub */ }
+        try { work = resolveDoi(normalizedDoi); } catch { /* keep DOI stub */ }
         if (work) {
           const authors = (work.author ?? []).map((a: any) =>
             a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ");
@@ -926,8 +946,8 @@ function parseInlineBibliography(text: string): Record<number, string> {
 
 // Synchronous CrossRef DOI lookup (uses child_process to call node)
 function lookupDoiSync(doi: string): any | null {
-  const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, "").trim();
-  const url = `https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`;
+  const cleanDoiUrl = cleanDoi(doi.replace(/^https?:\/\/doi\.org\//i, ""));
+  const url = `https://api.crossref.org/works/${encodeURIComponent(cleanDoiUrl)}`;
   try {
     // Use curl for synchronous HTTP request
     const output = execFileSync("curl", ["-s", "-H", "User-Agent: pi-paper-lab/0.5", url], {
