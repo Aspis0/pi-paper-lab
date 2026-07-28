@@ -39,9 +39,9 @@ Interactive menu for API keys, domain selection, citation backend.
 ## Use
 
 ```
-/paper-write "intro on micro-CT imaging in Drosophila cancer cachexia"
+/paper-write "introduction section for a mouse immunology paper"
 /paper-rewrite MyDraft.md "tighten the methods section"
-/paper-cite MyDraft.docx "prefer Fearon 2011, Holland 2022"
+/paper-cite MyDraft.docx "verify all citations"
 ```
 
 `/paper-write` and `/paper-rewrite` start with a study phase: the LLM searches the literature and saves findings to `study-notes.md` next to the draft. The draft then cites the real papers it found.
