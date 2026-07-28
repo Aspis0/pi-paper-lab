@@ -1,12 +1,13 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
   "bin": {
     "paper-lab-finalize": "./bin/finalize.mjs",
-    "paper-lab-word": "./bin/generate-word.mjs"
+    "paper-lab-word": "./bin/generate-word.mjs",
+    "paper-lab-seed": "./bin/seed-sidecar.mjs"
   },
   "files": [
     "extensions",
