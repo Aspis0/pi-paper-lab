@@ -3,6 +3,8 @@
 // generate Vancouver-style bibliography.
 
 import { searchScholar, formatScholarResults, type ScholarResult } from "./serper-scholar.ts";
+import { searchExa, type ExaSearchResult } from "./exa-scholar.ts";
+import { loadConfig } from "./config.ts";
 import { lookupDoi, formatCrossRefWork, formatVancouver, type CrossRefWork } from "./crossref.ts";
 
 // === [CITE:topic] marker ===
@@ -129,33 +131,69 @@ export async function resolveCitation(
 ): Promise<ResolveResult> {
   const num = opts?.numResults ?? 5;
   const candidates: ResolveResult["candidates"] = [];
+  const backend = loadConfig().citation_backend ?? "serper";
 
-  // 1. Serper Scholar (broadest)
-  try {
-    const scholar = await searchScholar(topic, { num, signal: opts?.signal });
-    for (const r of scholar) {
-      const authors = Array.isArray(r.authors) ? r.authors.join(", ") : (r.authors ?? "");
+  // 1. Backend-specific search (Serper / Exa / both / auto)
+  if (backend === "serper" || backend === "both") {
+    try {
+      const scholar = await searchScholar(topic, { num, signal: opts?.signal });
+      for (const r of scholar) {
+        const authors = Array.isArray(r.authors) ? r.authors.join(", ") : (r.authors ?? "");
+        candidates.push({
+          title: r.title ?? "(untitled)",
+          authors,
+          year: r.year ?? "?",
+          venue: r.venue,
+          link: r.link,
+          source: "scholar",
+          snippet: r.snippet,
+          citations: r.citations,
+        });
+      }
+    } catch (err) {
+      // Scholar is optional; continue without it
       candidates.push({
-        title: r.title ?? "(untitled)",
-        authors,
-        year: r.year ?? "?",
-        venue: r.venue,
-        link: r.link,
+        title: `(Serper Scholar search failed: ${String(err).slice(0, 80)})`,
+        authors: "",
+        year: "?",
         source: "scholar",
-        snippet: r.snippet,
-        citations: r.citations,
       });
     }
-  } catch (err) {
-    // Scholar is optional; continue without it
-    candidates.push({
-      title: `(Serper Scholar search failed: ${String(err).slice(0, 80)})`,
-      authors: "",
-      year: "?",
-      source: "scholar",
-    });
   }
 
+  if (backend === "exa" || backend === "both" || backend === "auto") {
+    // For "auto": only run Exa if Serper key is missing OR if Exa is preferred
+    if (backend === "exa" || backend === "both" ||
+        (backend === "auto" && !process.env.SERPER_API_KEY && !loadConfig().serper)) {
+      try {
+        const exaResults = await searchExa(topic, { num, signal: opts?.signal });
+        for (const r of exaResults) {
+          const year = r.publishedDate ? new Date(r.publishedDate).getFullYear() : undefined;
+          candidates.push({
+            title: r.title ?? "(untitled)",
+            authors: r.author ?? "",
+            year: year ?? "?",
+            venue: undefined,  // Exa doesn't return venue
+            link: r.url,
+            source: "scholar",  // tag as "scholar" for downstream compatibility
+            snippet: r.highlights?.[0],
+          });
+        }
+      } catch (err) {
+        // Exa is optional; continue without it
+        if (backend === "exa") {
+          candidates.push({
+            title: `(Exa search failed: ${String(err).slice(0, 80)})`,
+            authors: "",
+            year: "?",
+            source: "scholar",
+          });
+        }
+      }
+    }
+  }
+
+  // CrossRef search by topic (always runs, for DOI + Vancouver citation)
   // 2. CrossRef search by topic (smart query — filter to journal articles only)
   try {
     const crossRes = await fetch(

@@ -9,8 +9,12 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", ".paper-lab-keys.json");
 
+export type CitationBackend = "serper" | "exa" | "both" | "auto";
+
 export interface PaperLabConfig {
   serper?: string;
+  exa?: string;                                 // NEW: Exa.ai API key
+  citation_backend?: CitationBackend;           // NEW: which backend to use
   copyleaks_email?: string;
   copyleaks_api_key?: string;
   domain?: string;  // domain key from data/domains/*.yaml, or "auto" for auto-detect
@@ -46,6 +50,12 @@ export function getCopyleaksKey(): string | undefined {
   return loadConfig().copyleaks_api_key;
 }
 
+// Called by exa-scholar.ts: tries env var first, then config file
+export function getExaKey(): string | undefined {
+  if (process.env.EXA_API_KEY) return process.env.EXA_API_KEY;
+  return loadConfig().exa;
+}
+
 // === /paper-lab command ===
 export async function paperLabConfigCommand(
   _args: string,
@@ -73,25 +83,30 @@ export async function paperLabConfigCommand(
   };
 
   const lines = [
-    "╔══════════════════════════════════════╗",
-    "║   pi-paper-lab API Key Manager       ║",
-    "╚══════════════════════════════════════╝",
+    "╔════════════════════════════════════════════╗",
+    "║   pi-paper-lab Configuration Manager       ║",
+    "╚════════════════════════════════════════════╝",
     "",
     `  1. Serper Scholar API key:  ${masked(config.serper)}`,
-    `  2. Copyleaks email:          ${masked(config.copyleaks_email)}`,
-    `  3. Copyleaks API key:        ${masked(config.copyleaks_api_key)}`,
+    `  2. Exa API key:             ${masked(config.exa)}`,
+    `  3. Copyleaks email:         ${masked(config.copyleaks_email)}`,
+    `  4. Copyleaks API key:       ${masked(config.copyleaks_api_key)}`,
+    `  5. Domain (current: ${config.domain ?? "auto"})`,
+    `  6. Citation backend (current: ${config.citation_backend ?? "serper"})`,
     "",
     "  Pick a number to set/update, or press Esc to exit.",
   ];
   ctx.ui.notify(lines.join("\n"), "info");
 
-  const choice = await ctx.ui.select("Which key to set?", [
+  const choice = await ctx.ui.select("Which to set?", [
     "1. Serper Scholar API key",
-    "2. Copyleaks email",
-    "3. Copyleaks API key",
-    `4. Domain (current: ${config.domain ?? "auto"})`,
-    "5. Show all (masked)",
-    "6. Delete all keys",
+    "2. Exa API key",
+    "3. Copyleaks email",
+    "4. Copyleaks API key",
+    "5. Domain",
+    "6. Citation backend (serper / exa / both / auto)",
+    "7. Show all (masked)",
+    "8. Delete all keys",
   ]);
 
   if (!choice) return;
@@ -103,18 +118,24 @@ export async function paperLabConfigCommand(
     saveConfig(config);
     ctx.ui.notify(`✅ Serper key saved to ${CONFIG_PATH}`, "info");
   } else if (choice.startsWith("2")) {
+    const key = await ctx.ui.input("Enter your Exa API key (get one at https://dashboard.exa.ai/api-keys):");
+    if (!key) { ctx.ui.notify("No key entered.", "warning"); return; }
+    config.exa = key.trim();
+    saveConfig(config);
+    ctx.ui.notify(`✅ Exa key saved to ${CONFIG_PATH}`, "info");
+  } else if (choice.startsWith("3")) {
     const email = await ctx.ui.input("Enter your Copyleaks account email:");
     if (!email) { ctx.ui.notify("No email entered.", "warning"); return; }
     config.copyleaks_email = email.trim();
     saveConfig(config);
     ctx.ui.notify("✅ Copyleaks email saved", "info");
-  } else if (choice.startsWith("3")) {
+  } else if (choice.startsWith("4")) {
     const key = await ctx.ui.input("Enter your Copyleaks API key (get one at https://copyleaks.com):");
     if (!key) { ctx.ui.notify("No key entered.", "warning"); return; }
     config.copyleaks_api_key = key.trim();
     saveConfig(config);
     ctx.ui.notify("✅ Copyleaks API key saved", "info");
-  } else if (choice.startsWith("4")) {
+  } else if (choice.startsWith("5")) {
     // Domain selection (data-driven from filesystem scan)
     const domainOptions = ["auto — detect from text", ...domainChoices.map(c => c.label)];
     const selected = await ctx.ui.select("Select domain:", domainOptions);
@@ -130,18 +151,37 @@ export async function paperLabConfigCommand(
         }
       }
     }
-  } else if (choice.startsWith("5")) {
+  } else if (choice.startsWith("6")) {
+    // Citation backend selection
+    const selected = await ctx.ui.select("Citation backend:", [
+      `serper (default — use Serper only) — current: ${(config.citation_backend ?? "serper") === "serper" ? "✓" : ""}`,
+      `exa (use Exa only) — current: ${config.citation_backend === "exa" ? "✓" : ""}`,
+      `both (parallel query, merge + dedupe) — current: ${config.citation_backend === "both" ? "✓" : ""}`,
+      `auto (try Exa first, fall back to Serper) — current: ${config.citation_backend === "auto" ? "✓" : ""}`,
+    ]);
+    if (selected) {
+      if (selected.startsWith("serper")) config.citation_backend = "serper";
+      else if (selected.startsWith("exa")) config.citation_backend = "exa";
+      else if (selected.startsWith("both")) config.citation_backend = "both";
+      else if (selected.startsWith("auto")) config.citation_backend = "auto";
+      saveConfig(config);
+      ctx.ui.notify(`✅ Citation backend set to: ${config.citation_backend}`, "info");
+    }
+  } else if (choice.startsWith("7")) {
     ctx.ui.notify(
       [
         "Current keys (masked):",
         `  Serper:     ${masked(config.serper)}`,
+        `  Exa:        ${masked(config.exa)}`,
         `  Copyleaks:  ${masked(config.copyleaks_email)} / ${masked(config.copyleaks_api_key)}`,
+        `  Domain:     ${config.domain ?? "auto"}`,
+        `  Backend:    ${config.citation_backend ?? "serper"}`,
         "",
         `  Config file: ${CONFIG_PATH}`,
       ].join("\n"),
       "info",
     );
-  } else if (choice.startsWith("6")) {
+  } else if (choice.startsWith("8")) {
     const confirm = await ctx.ui.confirm("Delete all keys?", "This will remove all stored API keys. Are you sure?");
     if (confirm) {
       saveConfig({});
