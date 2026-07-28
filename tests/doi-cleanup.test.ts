@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { cleanDoi, finalizeDoc } from "../src/pipeline.ts";
+import type { CrossRefWork } from "../src/crossref.ts";
 import {
   mkdtempSync as mkdtempSyncC, writeFileSync as writeFileSyncC,
   rmSync as rmSyncC, readFileSync as readFileSyncC,
@@ -85,32 +86,33 @@ test("cleanDoi: trims surrounding whitespace", () => {
 // resolved one (not the (doi:...) stub). No CrossRef, no docx CLI.
 
 const fixtureWork = {
-  DOI: "10.1242/dmm.049298",
+  doi: "10.1242/dmm.049298",
   title: ["Cancer cachexia: lessons from Drosophila"],
   author: [
     { family: "Liu", given: "Ying" },
     { family: "Saavedra", given: "Pedro" },
     { family: "Perrimon", given: "Norbert" },
   ],
-  published: { "date-parts": [[2022]] },
-  "container-title": ["Disease Models & Mechanisms"],
+  published: { dateParts: [2022] },
+  containerTitle: ["Disease Models & Mechanisms"],
   volume: "15",
   page: "dmm049298",
-} as any;
+} satisfies CrossRefWork;
 
 const lookupFixture = (_doi: string) => fixtureWork;
 
-const cases: Array<{ name: string; input: string; expectedDoi: string }> = [
+const cases: Array<{ name: string; input: string; expectedDoi: string; expectedCount?: number }> = [
   { name: "well-formed angle-bracket", input: "x [1](<doi:10.1242/dmm.049298>).", expectedDoi: "10.1242/dmm.049298" },
   { name: "well-formed plain", input: "x [1](doi:10.1242/dmm.049298).", expectedDoi: "10.1242/dmm.049298" },
   { name: "trailing ].", input: "x [1](doi:10.1242/dmm.049298].", expectedDoi: "10.1242/dmm.049298" },
-  { name: "trailing ]", input: "x [1](doi:10.1242/dmm.049298].", expectedDoi: "10.1242/dmm.049298" },
-  { name: "trailing ,", input: "x [1](doi:10.1242/dmm.049298,", expectedDoi: "10.1242/dmm.049298" },
+  { name: "trailing ]. other artifacts", input: "x [1](doi:10.1242/dmm.049298]... ", expectedDoi: "10.1242/dmm.049298" },
+  { name: "trailing ," , input: "x [1](doi:10.1242/dmm.049298,", expectedDoi: "10.1242/dmm.049298" },
   { name: "trailing ;", input: "x [1](doi:10.1242/dmm.049298;", expectedDoi: "10.1242/dmm.049298" },
   { name: "trailing .", input: "x [1](doi:10.1242/dmm.049298.", expectedDoi: "10.1242/dmm.049298" },
   { name: "trailing ).", input: "x [1](doi:10.1242/dmm.049298).", expectedDoi: "10.1242/dmm.049298" },
   { name: "trailing ]. and adjacent text", input: "x [1](doi:10.1242/dmm.049298]. More text.", expectedDoi: "10.1242/dmm.049298" },
   { name: "lowercase doi:", input: "x [1](doi:10.1242/dmm.049298).", expectedDoi: "10.1242/dmm.049298" },
+  { name: "angle-bracket with internal parens (Elsevier-style DOI)", input: "x [1](<doi:10.1016/S0896-6273(00)80701-1>).", expectedDoi: "10.1016/S0896-6273(00)80701-1" },
   { name: "multiple citations in same doc", input: "x [1](doi:10.1242/dmm.049298) and [2](<doi:10.1242/dmm.049298>).", expectedDoi: "10.1242/dmm.049298", expectedCount: 2 },
 ];
 
@@ -120,7 +122,7 @@ for (const c of cases) {
     const md = joinC(dir, "in.md");
     writeFileSyncC(md, c.input, "utf-8");
     const result = finalizeDoc(md, { noCache: true, lookupDoi: lookupFixture });
-    const expectedCount = (c as any).expectedCount ?? 1;
+    const expectedCount = c.expectedCount ?? 1;
     assert.equal(result.bibliographyCount, expectedCount, `bibliography count for case '${c.name}' got=${result.bibliographyCount} expected=${expectedCount}`);
     const sidecar = JSON.parse(
       readFileSyncC(md.replace(/\.md$/, ".citations.json"), "utf-8"),
@@ -138,3 +140,31 @@ for (const c of cases) {
     rmSyncC(dir, { recursive: true });
   });
 }
+
+// --- Documented limitation: the plain form `[N](doi:…)` does NOT support
+// DOIs that contain `(` (Elsevier-style). The plain regex `[^)>\n]+` stops at
+// the first `)`. LLM-authored drafts MUST use the angle-bracket form
+// `[N](<doi:10.1016/S0896-6273(00)80701-1>)` for those DOIs. This test
+// pins the behaviour so we don't regress it silently.
+test("finalizeDoc: plain form with a DOI containing parens is TRUNCATED (documented limitation)", () => {
+  const dir = mkdtempSyncC(joinC(tmpdirC(), "doi-cleanup-"));
+  const md = joinC(dir, "in.md");
+  writeFileSyncC(
+    md,
+    "x [1](doi:10.1016/S0896-6273(00)80701-1).",
+    "utf-8",
+  );
+  const result = finalizeDoc(md, { noCache: true, lookupDoi: lookupFixture });
+  // Why 1? The plain regex captures `10.1016/S0896-6273(00`, which still
+  // starts with `10.`, so the matcher accepts it as a citation. The
+  // resulting bibliography stub is wrong (the DOI is truncated).
+  assert.equal(result.bibliographyCount, 1, "plain form still captures SOMETHING (truncated)");
+  const sidecar = JSON.parse(
+    readFileSyncC(md.replace(/\.md$/, ".citations.json"), "utf-8"),
+  ) as any;
+  const entry = sidecar.citations?.["1"];
+  assert.ok(entry);
+  // The truncated DOI ends at the first `)`. Document the exact truncation.
+  assert.equal(entry.doi, "10.1016/S0896-6273(00", "plain form truncates at the first `)` (documented)");
+  rmSyncC(dir, { recursive: true });
+});

@@ -381,18 +381,19 @@ back to the `static` output and prints a clear error: "live build failed:
 <reason>; produced static docx instead. Re-run without --live or report."
 Never produces a corrupt docx.
 
-### 3.10 Style switching (IEEE / Vancouver, user-selectable)
+### 3.10 Style switching (IEEE-only in v0.7.0)
 
 **User decision (2026-07-28)**: citation style is selectable from the
-paper-lab settings (where API keys already live) — both IEEE and Vancouver
-must be supported IN PRINCIPLE, but the audit (MED-4) flagged that the
-original "bundled .xsl at absolute path" strategy is not portable.
+paper-lab settings (where API keys already live). The audit (MED-4)
+flagged that the original "bundled .xsl at absolute path" strategy is
+not portable. After re-scoping, v0.7.0 ships **IEEE only** as the
+supported target; Vancouver and APA are reserved but refused.
 
 #### v0.7.0: IEEE-only as the supported target
 
 For v0.7.0 we ship IEEE numeric as the only fully-supported style. The
-`citation_style` setting accepts `ieee` (default) or `apa`. The user
-selects `ieee` from `config.ts` (`citation_style: "ieee"`) and the
+`citation_style` setting accepts `ieee` (default) only at the
+implementation level; the type is `citation_style: "ieee"`. The
 builder writes:
 
 ```xml
@@ -404,6 +405,22 @@ builder writes:
 no portable way to test "is this `.xsl` present on the target machine"
 without actually opening Word; the risk surface is acceptable because
 `IEEE` is the most commonly-shipped built-in style.
+
+#### APA and Vancouver: refused in v0.7.0
+
+The `citation_style` setting strictly accepts `"ieee"` in v0.7.0. Any
+other value (`"apa"`, `"vancouver"`, etc.) causes the builder to:
+
+1. Refuse to proceed with a clear error: `"--live build refused:
+   citation_style=<value> is not supported in v0.7.0. Only 'ieee' is
+   supported (Word built-in IEEE2006.OfficeOnline.xsl). Falling back
+   to a different style would silently produce wrong output."`
+2. Fall back to the static `--static` output (no live Word fields).
+3. Print the README section that describes the v0.8+ roadmap for APA
+   and Vancouver.
+
+No silent fallback to IEEE. The user MUST explicitly choose `ieee` or
+omit `citation_style` (default).
 
 #### Vancouver: experimental, opt-in, requires local install
 
@@ -681,9 +698,10 @@ Each phase is independently shippable as a point release on the 0.7 branch:
    `data/word-reference-xml/`. What is NOT done yet is the M0.5 manual
    validation matrix (insert 2 IEEE citations, delete one, F9, verify
    renumbering); see §3.0.
-2. **Citation style**: ✅ IEEE-only fully supported in v0.7.0; Vancouver
-   marker exists in `config.ts` but refuses to build (per audit MED-4).
-   Future major may bundle a Vancouver XSL — see §3.10.
+2. **Citation style**: ✅ IEEE-only fully supported in v0.7.0; APA and
+   Vancouver refuse to build (per audit MED-4). `citation_style` in
+   `config.ts` is strictly `"ieee"` in v0.7.0. Future major may bundle
+   a Vancouver XSL — see §3.10.
 3. **`ask_user` tool**: ✅ real pausing tool (not synchronous block).
    Implemented in M2.
 4. **New dependency**: `adm-zip` will be added in M4 (when the post-processor

@@ -85,7 +85,17 @@ preservation, TDZ bug fix, MED-1 prompt clarity, LOW-1 sidecar honesty).
 Nothing changed there; only the infrastructure around publishing was
 unblocked.
 
-## v0.6.3.2 — `--verify-all` + inline-citation preservation
+## post-v0.6.3 fixes — released in v0.6.4 (`--verify-all` + inline-citation preservation)
+
+> NOTE: this section was originally labelled "v0.6.3.2" in the repo, but
+> `0.6.3.2` is not valid SemVer and was never published to npm. The
+> content of this section shipped as part of the v0.6.4 release (
+> `feat(extension): v0.6.3.2 --verify-all + CITATIONS ALREADY PRESENT` was
+> a single commit, tagged `v0.6.4`). Renamed here for clarity and SemVer
+> correctness. The git tag `v0.6.4` is the canonical reference; this
+> section is the changelog entry for what shipped in that tag.
+
+
 
 ### Fixes the user explicitly asked for
 

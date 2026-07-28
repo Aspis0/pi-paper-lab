@@ -315,11 +315,23 @@ import { finalizeDoc } from "../src/pipeline.ts";
 import { mkdtempSync as mkdtempSyncMal, writeFileSync as writeFileSyncMal, rmSync as rmSyncMal } from "node:fs";
 import { tmpdir as tmpdirMal } from "node:os";
 import { join as joinMal } from "node:path";
+import type { CrossRefWork } from "../src/crossref.ts";
 
 const tmpDirMalformed = mkdtempSyncMal(joinMal(tmpdirMal(), "papertest-"));
 const malformedFile = joinMal(tmpDirMalformed, "malformed.md");
 writeFileSyncMal(malformedFile, "Some text [3](doi:10.1016/j.devcel.2015.03.001; and more text.", "utf-8");
-const r1 = finalizeDoc(malformedFile);
+// Same as HIGH-3: use a fixture to keep the suite offline. The defensive
+// regex fallback is what catches this marker (trailing `; and more text`).
+const malformedFixture: CrossRefWork = {
+  doi: "10.1016/j.devcel.2015.03.001",
+  title: ["Malignant Drosophila Tumors Interrupt Insulin Signaling to Induce Cachexia-like Wasting"],
+  author: [{ family: "Figueroa-Clarevega", given: "Alejandra" }, { family: "Bilder", given: "David" }],
+  published: { dateParts: [2015] },
+  containerTitle: ["Developmental Cell"],
+  volume: "49",
+  page: "1",
+};
+const r1 = finalizeDoc(malformedFile, { noCache: true, lookupDoi: () => malformedFixture });
 assert(r1.bibliographyCount === 1, `Malformed DOI: caught by defensive regex (got ${r1.bibliographyCount})`);
 
 // HIGH-3 (v0.6.6): missing `<doi:` opener AND `]` instead of `)` at the end.
@@ -333,15 +345,15 @@ writeFileSyncMal(
   "Cancer cachexia is a set of syndromes [13](doi:10.1242/dmm.049298]. More text.",
   "utf-8",
 );
-const fixtureWork = {
-  DOI: "10.1242/dmm.049298",
+const fixtureWork: CrossRefWork = {
+  doi: "10.1242/dmm.049298",
   title: ["Cancer cachexia: lessons from Drosophila"],
   author: [{ family: "Liu", given: "Ying" }, { family: "Saavedra", given: "Pedro" }, { family: "Perrimon", given: "Norbert" }],
-  published: { "date-parts": [[2022]] },
-  "container-title": ["Disease Models & Mechanisms"],
+  published: { dateParts: [2022] },
+  containerTitle: ["Disease Models &amp; Mechanisms"],
   volume: "15",
   page: "dmm049298",
-} as any;
+};
 const rHigh3 = finalizeDoc(high3File, { noCache: true, lookupDoi: (_doi: string) => fixtureWork });
 assert(rHigh3.bibliographyCount === 1, `HIGH-3: bibliography count is 1 (got ${rHigh3.bibliographyCount})`);
 // Read the sidecar and assert the DOI is clean (no trailing `])`).
