@@ -52,7 +52,7 @@ Interactive menu for API keys, domain selection, citation backend.
 |---|---|
 | `/paper-write <description> [--output path]` | Generate text from a description |
 | `/paper-rewrite <file> [instructions]` | Rewrite anti-AI + add citations |
-| `/paper-cite <file> [instructions]` | Add citations to existing draft. **Note:** the LLM may rewrite surrounding prose to integrate new citations — use `/paper-rewrite` if you want strict citation-only edits |
+| `/paper-cite <file> [--strict] [instructions]` | Add citations to existing draft. Pass `--strict` to forbid rewriting surrounding prose (citation-only mode) |
 | `/paper-lab` | API keys + domain + citation backend |
 
 ## Domains

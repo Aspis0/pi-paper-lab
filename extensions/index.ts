@@ -84,15 +84,18 @@ export default function (pi: ExtensionAPI) {
   // === 3. Two visible pipeline commands + helper commands ===
 
   pi.registerCommand("paper-cite", {
-    description: "Read a draft, find citations for claims (LLM cite-mark), assign DOIs, generate bibliography + Word .docx. The LLM may rewrite surrounding prose to fit new citations. Usage: /paper-cite <file.md> [instructions...]",
+    description: "Read a draft, find citations for claims (LLM cite-mark), assign DOIs, generate bibliography + Word .docx. Pass --strict to forbid rewriting surrounding prose. Usage: /paper-cite <file.md> [--strict] [instructions...]",
     handler: async (args, ctx) => {
       const raw = args.trim().replace(/["']/g, "");
-      // Split at .md or .docx boundary — everything after is instructions
-      const m = raw.match(/^(.+?\.(?:md|docx))\s*(.*)$/s);
-      const target = m ? m[1] : raw;
+      // Parse --strict flag (anywhere in args)
+      const strict = /\B--strict\b/.test(raw);
+      // Strip --strict and split at .md or .docx boundary
+      const cleaned = raw.replace(/\B--strict\b/g, "").trim();
+      const m = cleaned.match(/^(.+?\.(?:md|docx))\s*(.*)$/s);
+      const target = m ? m[1] : cleaned;
       const instructions = m ? m[2] : "";
       if (!target) {
-        ctx.ui.notify("Usage: /paper-cite <file-path.md> [cite instructions...]", "warning");
+        ctx.ui.notify("Usage: /paper-cite <file-path.md> [--strict] [cite instructions...]", "warning");
         return;
       }
       try {
@@ -101,7 +104,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Could not read ${target}: ${String(err)}`, "error");
         return;
       }
-      await pipelineCite(target, pi, instructions);
+      await pipelineCite(target, pi, instructions, strict);
     },
   });
 

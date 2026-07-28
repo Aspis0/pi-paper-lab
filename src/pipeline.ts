@@ -112,6 +112,7 @@ export async function pipelineCite(
   inputPath: string,
   pi: ExtensionAPI,
   instructions: string = "",
+  strict: boolean = false,
 ): Promise<void> {
   // If .docx, extract to .md first so the LLM works on Markdown
   let workPath = inputPath;
@@ -139,6 +140,7 @@ export async function pipelineCite(
     `Existing citations: ${existingCitations}`,
     `Unresolved [CITE:topic] markers: ${existingMarkers}`,
     `Citation backend: ${backend}`,
+    strict ? `STRICT MODE: do NOT modify surrounding prose — only insert [N](<doi:...>) markers.` : "",
     instructions ? `User instructions: ${instructions}` : "",
     ``,
     `Step 1: I will identify claims that need citations (LLM cite-mark).`,
