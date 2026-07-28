@@ -245,22 +245,64 @@ export async function pipelineRewrite(
 }
 
 // === Pipeline 3: /paper-write ===
+
+/**
+ * Derive a filesystem-safe filename slug from a free-form description.
+ * Used as the default outPath so two pipelineWrite calls with different
+ * descriptions produce different files without the LLM having to pass
+ * --output. Takes the first 5 alphanumeric tokens, lowercases, and
+ * joins with hyphens. Falls back to "paper" if no usable token is found.
+ *
+ * Examples:
+ *   "Write an intro section about cachexia" -> "write-an-intro-section"
+ *   "Methods: Drosophila cachexia model"      -> "methods-drosophila-cachexia"
+ *   "!!!"                                    -> "paper"
+ */
+/**
+ * Public helper for the tests: the default outPath derivation
+ * pipelineWrite uses internally. Exposed so the auto-slug behaviour
+ * is testable without needing a live pi ExtensionAPI mock.
+ */
+export function resolveDefaultOutPath(
+  description: string,
+  opts: { outputDir?: string; outputPath?: string } = {},
+): string {
+  const outputDir = opts.outputDir ?? join(process.cwd(), "paper-write-out");
+  if (opts.outputPath) return opts.outputPath;
+  return join(outputDir, `${slugifyDescription(description)}.md`);
+}
+
+function slugifyDescription(description: string): string {
+  const tokens = description
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/[\s-]+/)
+    .filter((w) => w.length >= 3)
+    .slice(0, 5);
+  if (tokens.length === 0) return "paper";
+  return tokens.join("-");
+}
 // User describes what to write → LLM generates draft → AI check → cite → finalize
 export async function pipelineWrite(
   description: string,
   pi: ExtensionAPI,
   opts?: { outputPath?: string; outputDir?: string },
 ): Promise<void> {
-  // v0.7.x: the default outputDir is `<cwd>/paper-write-out/`, NOT a
-  // single hardcoded file. This is so multiple pipelineWrite calls
-  // (e.g. for different sections of the same paper) don't overwrite
-  // each other. The LLM must pass --output <path> to override the
-  // default file name; the default is "paper.md" inside outputDir.
-  // Hardcoding a single file (the previous `paper-write-output.md`
-  // default) was wrong: a user running two pipelineWrite calls would
-  // silently clobber the first output.
-  const outputDir = opts?.outputDir ?? join(process.cwd(), "paper-write-out");
-  const outPath = opts?.outputPath ?? join(outputDir, "paper.md");
+  // v0.7.x: the default outPath is derived from the `description`
+  // itself (slug from the first 3-5 alphanumeric tokens). This way
+  // multiple pipelineWrite calls with different descriptions produce
+  // different files WITHOUT requiring the LLM to pass --output. The
+  // LLM is free to pass --output <path> to override the default; we
+  // also accept outputDir to change the destination directory.
+  // The previous hardcoded `paper-write-output.md` was wrong: a
+  // user running two pipelineWrite calls would silently clobber the
+  // first output. The previous "paper.md inside paper-write-out/" was
+  // also wrong for the same reason. Both versions required the LLM
+  // to remember to pass --output. This version does NOT.
+  const outPath = resolveDefaultOutPath(description, {
+    outputDir: opts?.outputDir,
+    outputPath: opts?.outputPath,
+  });
   const notesPath = outPath.replace(/\.md$/, ".study-notes.md");
 
   const prompt = [
@@ -273,7 +315,7 @@ export async function pipelineWrite(
     `- No AI-tells: no "delve", "leverage", "elucidate", "crucially", "notably".`,
     `- Paragraphs of 3-6 sentences. Vary sentence length.`,
     ``,
-    `If you want to write to a SPECIFIC file (e.g. for multiple sections of the same paper, or to avoid the default), pass --output <path>. The default file is ${outPath.replace(/\\/g, "/")} — multiple pipelineWrite calls without --output will OVERWRITE each other.`,
+    `If you want to write to a SPECIFIC file (e.g. for multiple sections of the same paper), pass --output <path>. The default file is ${outPath.replace(/\\/g, "/")} — it is auto-derived from the description so two pipelineWrite calls with different descriptions produce different files without you having to remember --output.`,
     ``,
     `Do these steps ALL IN ONE TURN:`,
     ``,

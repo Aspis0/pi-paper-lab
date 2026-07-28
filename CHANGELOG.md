@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.7.0-alpha.9 — pipelineWrite default path is auto-derived (no silent clobber)
+
+The default outPath for pipelineWrite is now derived from the
+description itself. Two pipelineWrite calls with different
+descriptions produce different files WITHOUT the LLM having to
+remember to pass --output.
+
+### Changed
+
+- `resolveDefaultOutPath(description, opts)` — new exported helper
+  that returns the default outPath. The default file is
+  `<outputDir>/<slug>.md` where the slug is the first 5 alphanumeric
+  tokens of the description (lowercased, hyphenated, min 3 chars).
+- `pipelineWrite` uses `resolveDefaultOutPath` instead of the
+  hardcoded `<cwd>/paper-write-out/paper.md` (which still clobbered
+  on multiple calls) or the previous `paper-write-output.md` (which
+  clobbered even more aggressively).
+- New `opts.outputDir` (default `<cwd>/paper-write-out/`) and
+  `opts.outputPath` (overrides the whole path). Both are opt-in.
+
+### Examples
+
+| description                            | default outPath                                              |
+|----------------------------------------|--------------------------------------------------------------|
+| "Write an intro section about cachexia" | `<cwd>/paper-write-out/write-an-intro-section-about-cachexia.md` |
+| "Methods: Drosophila cachexia model"    | `<cwd>/paper-write-out/methods-drosophila-cachexia-model.md` |
+| "!!!"                                   | `<cwd>/paper-write-out/paper.md`                            |
+| ""                                      | `<cwd>/paper-write-out/paper.md`                            |
+
+### Tests
+
+- `tests/pipeline-write-path.test.ts` (6 cases): two different
+  descriptions produce different files; same description is stable;
+  explicit `outputPath` wins; the default outputDir is
+  `<cwd>/paper-write-out/`; the slug strips punctuation and is
+  limited to 5 tokens; empty / non-alphanumeric descriptions fall
+  back to `paper`.
+
 ## v0.7.0-alpha.8 — M4 Word-native citation builder
 
 ### Added
