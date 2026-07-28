@@ -84,7 +84,7 @@ export default function (pi: ExtensionAPI) {
   // === 3. Two visible pipeline commands + helper commands ===
 
   pi.registerCommand("paper-cite", {
-    description: "Read a draft, identify claims needing citations (LLM cite-mark), batch search sources, assign DOIs, generate bibliography + Word .docx. Usage: /paper-cite <file.md> [instructions...]",
+    description: "Read a draft, find citations for claims (LLM cite-mark), assign DOIs, generate bibliography + Word .docx. The LLM may rewrite surrounding prose to fit new citations. Usage: /paper-cite <file.md> [instructions...]",
     handler: async (args, ctx) => {
       const raw = args.trim().replace(/["']/g, "");
       // Split at .md or .docx boundary — everything after is instructions

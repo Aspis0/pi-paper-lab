@@ -379,6 +379,11 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
     text += `\n\n---\n\n## References\n\n${refs}\n`;
   }
 
+  // 3b. Normalize any leftover references LLM wrote directly in the document.
+  // Format: "<number>.   <text>" → "<number>. <text>" (collapse multi-space after period).
+  // Without this, Markdown interprets "9.    Ding" as an ordered list item.
+  text = text.replace(/^(\d+)\.\s\s+(?=\S)/gm, '$1. ');
+
   // 4. Create .docx with --force (overwrite)
   const tempMd = markdownPath.replace(/\.md$/i, ".final.md");
   try {
