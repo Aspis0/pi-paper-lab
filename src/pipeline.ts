@@ -314,20 +314,49 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
     ? `STEP 0 — CONTEXT REFRESH (optional, only if topic is unclear):\n   If the draft's topic is ambiguous or you need recent literature context, call find_citation 1-3 times and save notes to ${studyNotesPath.replace(/\\/g, "/")} (same structure as study-notes.md: Topic summary, Key concepts, Candidate references with DOIs). Most rewrites skip this — proceed to STEP 1 if topic is clear.\n\n`
     : "";
 
+  // v0.6.3: surface the citation sidecar to the LLM so it doesn't waste
+  // tokens re-resolving already-cached DOIs. If the sidecar exists, list
+  // every cached `[N] → doi` so the model can reuse it verbatim.
+  //
+  // Format is human-readable markdown so the model can grep it cheaply.
+  let cacheBlock = "";
+  try {
+    const sidecar = loadCitationSidecar(filePath);
+    if (sidecar.size > 0) {
+      const lines = [...sidecar.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([num, entry]) => `  [${num}] → ${entry.doi ?? "(no DOI)"}${entry.doi ? "" : " — placeholder"}`);
+      cacheBlock = [
+        ``,
+        `CITATION CACHE (already resolved — REUSE these DOIs, do NOT call find_citation for them again):`,
+        `  File: ${sidecarPathFor(filePath)}`,
+        ...lines,
+        ``,
+        `For every [N] in the CACHE: keep it as [N](<doi:...>) verbatim.`,
+        `Only call find_citation for claims that have NO existing [N] marker.`,
+        `If a claim was already cited as [N] and you can find it in the cache, you don't need to do anything.`,
+        ``,
+      ].join("\n");
+    }
+  } catch {
+    // Sidecar missing or malformed — that's fine, the cacheBlock stays empty.
+  }
+
   return [
     `Paper draft: ${filePath}`,
     ``,
     userBlock,
+    cacheBlock,
     `---`,
     text,
     `---`,
     ``,
     rewriteBlock,
     studyBlock,
-    `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch parallel). Assign [N](<doi:10.xxxx>) sequentially — ALWAYS use angle brackets around the doi, even for simple DOIs. Write the resolved file to ${filePath}.`,
+    `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each NEW claim (batch parallel). For claims already cited in the CACHE block above, leave the existing [N](<doi:...>) markers as-is — do NOT re-search. Assign NEW [N] sequentially starting from max(existing)+1, ALWAYS using angle brackets around the DOI: [N](<doi:10.xxxx>). Write the resolved file to ${filePath}.`,
     `STEP ${startStep + 1} — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
     `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}`,
-    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry.`,
+    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry. To force fresh DOI resolution (bypass cache), add \`--no-cache\` at the end of the command above.`,
     `STEP ${startStep + 2} — REPORT: Tell the user the .docx path. Do NOT read the .docx (binary).`,
     ``,
     `Do ALL steps in ONE turn. Do not stop between steps.`,
@@ -337,9 +366,18 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
 // === finalizeDoc: ONE function that does everything ===
 // Reads .md with [N](doi:...) → generates bibliography → strips DOI → superscript [N] → .docx
 // The LLM only needs to write the .md and call this.
-export function finalizeDoc(markdownPath: string): { docxPath: string; bibliographyCount: number; error?: string } {
+export function finalizeDoc(
+  markdownPath: string,
+  opts?: { noCache?: boolean },
+): { docxPath: string; bibliographyCount: number; error?: string } {
   const docxPath = markdownPath.replace(/\.md$/i, ".docx");
   let text = readFileSync(markdownPath, "utf-8");
+
+  // v0.6.3: --no-cache flag forces fresh CrossRef resolution. Useful after
+  // the user manually edits the sidecar JSON or when they want to refresh
+  // stale metadata (e.g., a paper was retracted). We honor this by simply
+  // NOT loading the sidecar below; everything else is the same.
+  const useSidecar = !opts?.noCache;
 
   // 0. Strip any existing References section (idempotent — safe to re-run)
   // Step 0a: If the last line is exactly "## References" (no content after), remove it.
@@ -352,6 +390,20 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
 
   // 1. Parse all [N](<doi:...>) and [N](doi:...) markers and build Vancouver citations via CrossRef
   const citations = new Map<number, string>();
+
+  // 1a. Load any cached citations from the sidecar file (v0.6.3).
+  //
+  // The sidecar is a JSON map of `{N: {doi, vancouver}}` produced by previous
+  // successful finalizeDoc runs. We pre-populate `citations` from it so that
+  // bare [N] markers (a common case when the LLM has stripped DOIs or when
+  // the user re-edits prose without changing references) resolve WITHOUT a
+  // CrossRef roundtrip. This both speeds things up AND prevents the silent
+  // orphan-citation bug we had in v0.6.2.
+  const sidecar = useSidecar ? loadCitationSidecar(markdownPath) : new Map<number, SidecarEntry>();
+  for (const [num, entry] of sidecar.entries()) {
+    citations.set(num, entry.vancouver);
+  }
+
   // Primary: angle-bracket form [N](<doi:XXX>) — handles ALL DOIs including parens
   // Fallback: plain form [N](doi:XXX) — but only for DOIs without parens (safe)
   const re = /\[(\d+)\]\((?:<doi:\s*([^>\n]+)>|doi:\s*([^)>\n]+))\)/g;
@@ -387,6 +439,56 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
   text = text.replace(/\[(\d+)\]\((?:<doi:\s*[^>\n]+>|doi:\s*[^)>\n]+)\)/g, (_m, num) => `<sup>[${num}]</sup>`);
   // Also strip any remaining [CITE:topic] → [CITATION NEEDED]
   text = text.replace(CITE_MARKER, (_m, topic) => `[CITATION NEEDED: ${topic}]`);
+
+  // 2a. Handle bare [N] markers (v0.6.3).
+  //
+  // WHY: When /paper-cite runs on a file that already has bare [N] markers from
+  // an earlier session or from manual editing, the LLM typically leaves those
+  // markers alone and only adds new numbers. Result: the .docx ends up with
+  // orphan superscripts pointing to nothing in the References section.
+  //
+  // FIX: After processing [N](doi:...) markers, scan the remaining text for
+  // bare [N] references. For each one we don't already know about (no DOI),
+  // add a "no DOI resolved" placeholder to the bibliography AND convert the
+  // marker to <sup>[N]</sup> like the others. This makes the gap visible
+  // instead of hiding it (the user can then re-run /paper-cite to fill them).
+  //
+  // We do NOT touch [CITATION NEEDED: ...] (those are LLM work-in-progress
+  // markers, not user-authored [N] references).
+  const bareNums = new Set<number>();
+  const bareRe = /\[(\d+)\](?!\()/g;
+  let bm: RegExpExecArray | null;
+  while ((bm = bareRe.exec(text)) !== null) {
+    const n = parseInt(bm[1]);
+    if (n >= 1 && n < 1000) bareNums.add(n); // sanity cap on absurd numbers
+  }
+  if (bareNums.size > 0) {
+    for (const n of bareNums) {
+      // First try the sidecar cache — if we already resolved this [N] in a
+      // previous run, reuse the Vancouver text instead of writing a placeholder.
+      const cached = sidecar.get(n);
+      if (cached) {
+        citations.set(n, cached.vancouver);
+      } else if (!citations.has(n)) {
+        citations.set(n, `${n}. [Citation metadata unavailable — no DOI found. Re-run /paper-cite to resolve this reference.]`);
+      }
+    }
+    // Convert all bare [N] → <sup>[N]</sup> so the .docx has consistent styling.
+    text = text.replace(bareRe, (_m, num) => `<sup>[${num}]</sup>`);
+  }
+
+  // 2a-bis. Use sidecar to resolve bare [N] markers (v0.6.3).
+  //
+  // The bare-marker scan above first writes a placeholder into the
+  // bibliography. THEN we look up each bare number in the sidecar: if we
+  // find a cached entry, we UPGRADE the placeholder with the real
+  // Vancouver text. Order matters: the placeholder path runs on a fresh
+  // project (no sidecar yet) and degrades gracefully when the cache is
+  // missing, while the upgrade path runs only when the user has already
+  // resolved citations in a previous session.
+  //
+  // This is what makes "edit prose → re-finalize" actually work end-to-end
+  // without the LLM having to re-resolve any DOIs.
 
   // 2b. Defensive: catch malformed DOI markers (LLM bugs) — extract DOI from any
   // "[N](doi:...anything...)" pattern even if parens don't close properly.
@@ -431,8 +533,110 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
   }
   try { unlinkSync(tempMd); } catch {}
 
+  // 5. Write sidecar citation cache (v0.6.3).
+  //
+  // Why: when the user later edits the prose and re-finalizes the SAME .md
+  // (without adding new citations), we don't want to re-fetch the same 22
+  // DOIs from CrossRef. The sidecar lets subsequent runs re-use DOI +
+  // Vancouver string verbatim, even when the .md only has BARE [N] markers
+  // (the LLM-emitted format strips DOIs from prose on save).
+  //
+  // The sidecar is keyed by `[N] → { doi, vancouver }`. Resolved-DOI entries
+  // (with Vancouver from CrossRef) AND placeholder entries (no DOI) are BOTH
+  // written — placeholders let /paper-cite detect gaps on the next run.
+  //
+  // The file is JSON so it's diff-friendly if the user puts it under git.
+  // Schema version field lets us evolve without silent breakage.
+  try {
+    const cachePath = sidecarPathFor(markdownPath);
+    const entries: Record<string, SidecarEntry> = {};
+    for (const [num, vancouver] of citations.entries()) {
+      // Try to extract the DOI back out of the Vancouver string for the cache.
+      // Schema: the Vancouver entry includes "doi:10.xxxx" (resolved) or
+      // the placeholder text (unresolved).
+      const doiMatch = vancouver.match(/doi:(10\.[^\s\n]+)/);
+      entries[String(num)] = {
+        doi: doiMatch ? doiMatch[1] : null,
+        vancouver,
+      };
+    }
+    const sidecar: SidecarFile = {
+      schemaVersion: 1,
+      sourceMarkdown: markdownPath,
+      lastResolvedAt: new Date().toISOString(),
+      citationBackend: "crossref",
+      citations: entries,
+    };
+    writeFileSync(cachePath, JSON.stringify(sidecar, null, 2) + "\n", "utf-8");
+  } catch (err) {
+    // Sidecar write failure is non-fatal: the .docx was already produced.
+    // Don't fail the whole finalize if the cache write fails (disk full,
+    // permission denied, etc.). User loses cache, not bibliography.
+  }
+
   return { docxPath, bibliographyCount: citations.size };
 }
+
+// === Sidecar citation cache ===
+//
+// File: <markdownPath>.citations.json
+// Schema: { schemaVersion: 1, sourceMarkdown, lastResolvedAt, citationBackend,
+//           citations: { [N]: { doi, vancouver } } }
+//
+// The sidecar is an OPTIMIZATION: it lets /paper-cite and finalizeDoc skip
+// repeated CrossRef lookups for already-resolved citations. If the sidecar
+// is missing, stale, or malformed, finalizeDoc falls back to direct lookup.
+//
+// We deliberately keep the format human-readable JSON (not binary) so users
+// can grep, diff, and version-control the cache alongside their draft.
+interface SidecarEntry {
+  doi: string | null;
+  vancouver: string;
+}
+
+interface SidecarFile {
+  schemaVersion: 1;
+  sourceMarkdown: string;
+  lastResolvedAt: string; // ISO8601
+  citationBackend: string;
+  citations: Record<string, SidecarEntry>;
+}
+
+function sidecarPathFor(markdownPath: string): string {
+  return markdownPath.replace(/\.md$/i, ".citations.json");
+}
+
+function loadCitationSidecar(markdownPath: string): Map<number, SidecarEntry> {
+  const out = new Map<number, SidecarEntry>();
+  const cachePath = sidecarPathFor(markdownPath);
+  if (!existsSync(cachePath)) return out;
+  let raw: string;
+  try {
+    raw = readFileSync(cachePath, "utf-8");
+  } catch {
+    return out;
+  }
+  let parsed: SidecarFile;
+  try {
+    parsed = JSON.parse(raw) as SidecarFile;
+  } catch {
+    // Malformed JSON — treat as empty cache. Don't fail loudly; the user
+    // might have corrupted the file manually and finalizeDoc still works
+    // via CrossRef fallback.
+    return out;
+  }
+  // Validate schema. If schemaVersion is unsupported, bail rather than
+  // guess — we'd rather miss cache hits than corrupt the bibliography.
+  if (!parsed || parsed.schemaVersion !== 1 || !parsed.citations) return out;
+  for (const [numStr, entry] of Object.entries(parsed.citations)) {
+    const num = parseInt(numStr);
+    if (!isFinite(num) || num < 1 || num >= 1000) continue;
+    if (!entry || typeof entry.vancouver !== "string") continue;
+    out.set(num, { doi: entry.doi ?? null, vancouver: entry.vancouver });
+  }
+  return out;
+}
+
 
 // === Generate .docx from a resolved Markdown file (legacy, kept for /paper-to-word) ===
 // Step 1: create .docx with [N] as plain text

@@ -102,12 +102,25 @@ async function loadPipeline() {
 // ── 3. CLI entry ───────────────────────────────────────────────────────
 function usageAndExit(msg) {
   if (msg) console.error("Error:", msg);
-  console.error("Usage: paper-lab-finalize <path-to.md>");
+  console.error("Usage: paper-lab-finalize <path-to.md> [--no-cache] [--help] [--version]");
+  console.error("  --no-cache    Force fresh DOI resolution via CrossRef, ignoring any sidecar cache.");
+  console.error("                Use after manually editing the .citations.json sidecar or when");
+  console.error("                refreshing stale metadata.");
   process.exit(2);
 }
 
 async function main() {
-  const arg = process.argv[2];
+  // Parse flags out of process.argv early (they can appear before or after
+  // the path). Order-independent.
+  const argv = process.argv.slice(2);
+  const positional = [];
+  const opts = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--no-cache") opts.noCache = true;
+    else positional.push(a);
+  }
+  const arg = positional[0];
   if (!arg || arg === "-h" || arg === "--help") usageAndExit();
   if (arg === "--version" || arg === "-v") {
     try {
@@ -135,7 +148,7 @@ async function main() {
 
   let result;
   try {
-    result = mod.finalizeDoc(target);
+    result = mod.finalizeDoc(target, opts);
   } catch (err) {
     console.log("Error:", err?.message ?? String(err));
     process.exit(1);
@@ -144,7 +157,7 @@ async function main() {
     console.log("Error:", result.error);
     process.exit(1);
   }
-  console.log(`Done! Word: ${result.docxPath} | References: ${result.bibliographyCount}`);
+  console.log(`Done! Word: ${result.docxPath} | References: ${result.bibliographyCount}${opts.noCache ? " | (cache bypassed)" : ""}`);
 }
 
 main().catch((err) => {
