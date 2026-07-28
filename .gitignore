@@ -7,3 +7,25 @@ out/
 *.tsbuildinfo
 nul
 data/drosophila-lexicon.yaml.bak
+
+# Local working dirs (not part of the package)
+_workspace/
+_workspace/imports/
+_workspace/packages/
+
+# Editor / OS junk
+*.swp
+*.swo
+.idea/
+Thumbs.db
+
+# npm auth (NEVER commit)
+/.npmrc
+
+# Coverage / test artifacts
+coverage/
+.nyc_output/
+
+# Local study-phase outputs (regenerated per session)
+study-notes.md
+*.study-notes.md
