@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.7.0-alpha.5 — M2.2 ask-when-unsure integration
+
+### Added
+
+- **`find_citation` tool** now accepts an optional `claim` field. When
+  the resolver returns 2+ candidates and `claim` is set, the
+  AMBIGUOUS/REVIEW classifier (M2.1) is invoked and, if actionable,
+  a `CLARIFICATIONS NEEDED` menu is appended to the tool output for
+  the LLM to present to the user.
+- **`buildCiteMarkPrompt`** emits a new `DISAMBIGUATION (M2)` block
+  that tells the LLM:
+  1. When to call `find_citation` with a `claim` field (triggers the
+     disambiguator).
+  2. To present the menu verbatim, never to pick a candidate for
+     the user.
+  3. That `[ASK: short, single-line question]` is the inline fallback
+     when the LLM cannot decide.
+  4. That `[CITATION NEEDED: topic]` is the honest gap marker, not
+     an invention. DOIs are NEVER invented.
+  The CITE step explicitly mentions passing `claim` to find_citation
+  for the disambiguator to score candidates properly.
+- **`[ASK:question]` marker** is now parsed by `finalizeDoc`. The
+  questions are collected and rendered in a new
+  `## Questions for the author` section at the top of the produced
+  .docx, so the user can see what was left open after the LLM's
+  first pass. The inline marker is stripped from the prose.
+- **`extractAskQuestions(text)`** exported pure helper for the
+  parsing logic, used by the integration tests.
+- **`tests/clarify-integration.test.ts`** (9 cases, offline): the
+  buildCiteMarkPrompt disambiguation block is present and ordered
+  before the draft; find_citation with AMBIGUOUS/REVIEW produces
+  the right menu copy; RESOLVED does NOT trigger the menu;
+  extractAskQuestions collects, trims, and drops empty markers.
+
+### Notes
+
+- This is the synchronous-block mode of the ask-when-unsure UX.
+  The `ask_user` tool that pauses the LLM (M2.3) is deferred — the
+  current implementation presents the menu to the LLM in its
+  output, and the LLM forwards it to the user as a regular message.
+- The `## Questions for the author` section is rendered in BOTH
+  `--static` and `--live` modes for v0.7.0; a future release may
+  strip it from the static build.
+
 ## v0.7.0-alpha.4 — M2.1 second hostile-audit pass
 
 The previous alpha.3 release fixed all 24 findings from the first

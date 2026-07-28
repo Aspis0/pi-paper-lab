@@ -26,6 +26,7 @@ if (!process.env.PATH?.includes("local/bin") && !process.env.PATH?.includes("hom
 }
 import { loadLexicon, silentRewrite, scoreText } from "./anti-ai-lexicon.ts";
 import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER, CITE_WITH_DOI } from "./citations.ts";
+import { classifyFindings, formatClarifyPrompt, serialiseClarifications, type ClarifyItem } from "./clarify.ts";
 import { lookupDoi, formatVancouver, type CrossRefWork } from "./crossref.ts";
 import { detectAI, detectRewriteLoop, formatDetectionReport, type AIDetectionResult } from "./ai-detector.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -422,18 +423,32 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
     console.error("[paper-lab-finalize] WARN: failed to build CITATIONS ALREADY PRESENT block:", err?.message ?? err);
   }
 
+  // v0.7.0 (M2.2): disambiguation / ask-when-unsure block. Tells the
+  // LLM when to call find_citation with a `claim` parameter (triggers
+  // the AMBIGUOUS menu), and how to handle the three resolve paths:
+  // emit a citation, ask the user, or mark the gap with [CITATION NEEDED].
+  const clarifyBlock = [
+    `DISAMBIGUATION (M2) — when you are NOT sure:`,
+    `  1. For a topic with multiple plausible candidates, call find_citation with a \`claim\` field set to the sentence you need to back up. The tool will append a "CLARIFICATIONS NEEDED" menu you must present to the user.`,
+    `  2. Present the menu as-is to the user. Do NOT pick a candidate yourself.`,
+    `  3. After the user picks (or you cannot reach them), use the chosen candidate. If the user cannot decide, you may also: emit \`[ASK: short, single-line question]\` inline in the prose to ask the user later, OR emit \`[CITATION NEEDED: topic]\` to mark the gap honestly.`,
+    `  4. NEVER invent a DOI. If find_citation returns no candidates, emit \`[CITATION NEEDED: topic]\` — do not guess.`,
+    ``,
+  ].join("\n");
+
   return [
     `Paper draft: ${filePath}`,
     ``,
     userBlock,
     cacheBlock,
+    clarifyBlock,
     `---`,
     text,
     `---`,
     ``,
     rewriteBlock,
     studyBlock,
-    `STEP ${startStep} — CITE: Mark every factual claim that is NOT already cited with [CITE:topic]. Read the CITATIONS ALREADY PRESENT block above carefully — every [N] listed there is already valid; do NOT re-search or re-mark those claims. Call find_citation ONLY for genuinely new claims (batch parallel). Assign NEW [N] sequentially starting from max(existing)+1 (the block tells you the current maximum). ALWAYS use angle brackets around the DOI: [N](<doi:10.xxxx>). Write the resolved file to ${filePath}.`,
+    `STEP ${startStep} — CITE: Mark every factual claim that is NOT already cited with [CITE:topic]. Read the CITATIONS ALREADY PRESENT block above carefully — every [N] listed there is already valid; do NOT re-search or re-mark those claims. Call find_citation ONLY for genuinely new claims (batch parallel). For each topic, pass \`claim\` to find_citation so the disambiguator can score candidates properly. Assign NEW [N] sequentially starting from max(existing)+1 (the block tells you the current maximum). ALWAYS use angle brackets around the DOI: [N](<doi:10.xxxx>). Write the resolved file to ${filePath}.`,
     `STEP ${startStep + 1} — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
     `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}${verifyAll ? " --verify-all" : ""}`,
     `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry. To force fresh DOI resolution (bypass cache), add \`--no-cache\` at the end. To verify ALL citations (including ones with cached DOIs), add \`--verify-all\`.`,
@@ -441,6 +456,31 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
     ``,
     `Do ALL steps in ONE turn. Do not stop between steps.`,
   ].filter(Boolean).join("\n");
+}
+
+// === extractAskQuestions: exported helper for the [ASK:question] marker ===
+
+/**
+ * Extract `[ASK:question]` markers from a Markdown draft and return the
+ * cleaned text (markers removed) + the questions (in order of appearance).
+ * Exported so the integration tests can verify the parsing without
+ * having to spin up the full finalizeDoc pipeline.
+ *
+ * Format: `[ASK: short, single-line question]`. Multi-line is allowed
+ * (the regex captures until the first `]`) but the convention is to
+ * keep the question on one line.
+ *
+ * Whitespace inside the captured question is trimmed; empty questions
+ * are dropped.
+ */
+export function extractAskQuestions(text: string): { cleaned: string; questions: string[] } {
+  const questions: string[] = [];
+  const cleaned = text.replace(/\[ASK:([^\]]+)\]/g, (_m, q) => {
+    const trimmed = q.trim();
+    if (trimmed) questions.push(trimmed);
+    return "";
+  });
+  return { cleaned, questions };
 }
 
 // === cleanDoi: exported, idempotent, the single source of truth for DOI normalisation ===
@@ -582,6 +622,20 @@ export function finalizeDoc(
   // Also strip any remaining [CITE:topic] → [CITATION NEEDED]
   text = text.replace(CITE_MARKER, (_m, topic) => `[CITATION NEEDED: ${topic}]`);
 
+  // v0.7.0 (M2.2): collect [ASK:question] markers the LLM emitted when
+  // it could not decide between candidates. The questions are stripped
+  // from the prose (the user already saw them) and gathered into a
+  // QUESTIONS FOR THE AUTHOR section rendered at the top of the .docx
+  // in `--live` mode. In `--static` mode (the final submission build)
+  // the section is removed entirely so the .docx ships clean.
+  // The marker is collected into the askQuestions local variable,
+  // which is then emitted to the bibliography section below.
+  // For the static path the questions are dropped (they were LLM
+  // work-in-progress, not paper content).
+  const askExtraction = extractAskQuestions(text);
+  text = askExtraction.cleaned;
+  const askQuestions = askExtraction.questions;
+
   // 2a. Handle bare [N] markers (v0.6.3).
   //
   // WHY: When /paper-cite runs on a file that already has bare [N] markers from
@@ -683,6 +737,19 @@ export function finalizeDoc(
   if (citations.size > 0) {
     const refs = [...citations.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c).join("\n\n");
     text += `\n\n---\n\n## References\n\n${refs}\n`;
+  }
+
+  // v0.7.0 (M2.2): QUESTIONS FOR THE AUTHOR section at the top of the doc.
+  // The LLM emitted [ASK:question] markers while writing; collect them
+  // here so the user can see what was left open. The section is rendered
+  // in the .docx output regardless of --static / --live mode, but it is
+  // removed by `cleanExtractedDocx` if the user re-runs finalize on the
+  // .docx (the questions are no longer open once answered). For the
+  // very first finalize run, this is the only way the user sees the
+  // questions in the produced document.
+  if (askQuestions.length > 0) {
+    const numbered = askQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n");
+    text = `## Questions for the author\n\n${numbered}\n\n---\n\n` + text;
   }
 
   // 3a. CRIT-2 fix: detect which citation numbers are actually USED in the

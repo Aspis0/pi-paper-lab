@@ -9,6 +9,7 @@ import { detectSloppy, formatSloppyReport } from "./sloppy-detector.ts";
 import { searchScholar, formatScholarResults } from "./serper-scholar.ts";
 import { lookupDoi, formatCrossRefWork } from "./crossref.ts";
 import { resolveCitation, formatResolveResult, markClaims } from "./citations.ts";
+import { classifyFindings, formatClarifyPrompt } from "./clarify.ts";
 import { extractCitedClaims, buildVerificationPrompts, formatVerificationReport } from "./cite-verify.ts";
 import { markdownToWord, isDocxCliAvailable } from "./word-builder.ts";
 import { detectAI, formatDetectionReport } from "./ai-detector.ts";
@@ -219,18 +220,41 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
     name: "find_citation",
     label: "Find citations for a topic",
     description:
-      "Search for academic citations on a given topic. Combines Serper Scholar (broad) + CrossRef (DOI metadata). Returns ranked candidates with title, authors, year, venue, DOI, link, and citations count. Use when you see [CITE:topic] in a draft and need sources.",
+      "Search for academic citations on a given topic. Combines Serper Scholar (broad) + CrossRef (DOI metadata). Returns ranked candidates with title, authors, year, venue, DOI, link, and citations count. When AMBIGUOUS candidates are detected (M2), an additional `CLARIFICATIONS NEEDED` block is appended so the LLM can present a numbered menu to the user. Pass `claim` to enable disambiguation: the classifier scores the candidates against the claim sentence in addition to the topic.",
     parameters: Type.Object({
       topic: Type.String({ description: "Topic or claim to find citations for" }),
       num_results: Type.Optional(Type.Number({ description: "Max results per source (default 5)" })),
+      claim: Type.Optional(Type.String({ description: "Optional claim sentence for disambiguation scoring (M2)" })),
     }),
     async execute(_id, params, signal, _onUpdate, _ctx) {
       const result = await resolveCitation(params.topic, {
         numResults: params.num_results,
         signal,
       });
+      let out = formatResolveResult(result);
+      // M2.2: when AMBIGUOUS or REVIEW, append the formatClarifyPrompt
+      // menu so the LLM can present a numbered list to the user. This
+      // is the synchronous block mode; the ask_user tool (M2.3) will
+      // be the async pausing variant.
+      if (result.candidates.length >= 2) {
+        const findings = result.candidates.map((c) => ({
+          title: c.title,
+          authors: c.authors ? c.authors.split(",").map((s) => ({ family: s.trim() })) : [],
+          year: typeof c.year === "number" ? c.year : undefined,
+          venue: c.venue,
+          doi: c.doi,
+          source: (c.source === "crossref" ? "crossref" : "serper") as "crossref" | "serper",
+          // We have no abstract from Serper/Exa; mark as "medium" so
+          // computeConfidence falls back to topic-matching only.
+          confidence: "medium" as const,
+        }));
+        const item = classifyFindings(params.topic, findings, params.claim);
+        if (item.status === "AMBIGUOUS" || item.status === "REVIEW") {
+          out += "\n\n" + formatClarifyPrompt([item]);
+        }
+      }
       return {
-        content: [{ type: "text", text: formatResolveResult(result) }],
+        content: [{ type: "text", text: out }],
         details: {
           topic: params.topic,
           candidateCount: result.candidates.length,
