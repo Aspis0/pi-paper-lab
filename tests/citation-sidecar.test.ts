@@ -77,7 +77,11 @@ const DOI_CORPUS = [
   assert(sidecar.schemaVersion === 1, `sidecar schemaVersion === 1 (got ${sidecar.schemaVersion})`);
   assert(typeof sidecar.sourceMarkdown === "string", "sidecar.sourceMarkdown is a string");
   assert(typeof sidecar.lastResolvedAt === "string", "sidecar.lastResolvedAt is an ISO timestamp");
-  assert(sidecar.citationBackend === "crossref", "sidecar.citationBackend === 'crossref'");
+  // The sidecar records the user's configured backend (defaults to 'crossref'
+  // when unset). This was hardcoded to 'crossref' in v0.6.3 but reflects
+  // reality now.
+  assert(typeof sidecar.citationBackend === "string" && sidecar.citationBackend.length > 0,
+    `sidecar.citationBackend is a non-empty string (got '${sidecar.citationBackend}')`);
   assert(typeof sidecar.citations === "object", "sidecar.citations is an object");
   const firstRunCount = parseInt(stdout.match(/References:\s*(\d+)/)?.[1] ?? "0");
   assert(firstRunCount >= 0, `first-run References count >= 0 (got ${firstRunCount})`);

@@ -410,6 +410,7 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
         `  - If the [N](<doi:...>) marker is ALREADY in the prose, leave it as-is.`,
         `  - If the [N] is only in the cache (bare marker in prose), re-attach: replace [N] with [N](<doi:...>).`,
         `  - Do NOT call find_citation for any [N] that already has a resolved DOI in this list.`,
+        `For [N] entries listed as '(bare marker in prose — no DOI resolved yet)': you MUST call find_citation to backfill them with a DOI.`,
         `Only call find_citation for claims that are NOT yet cited at all (genuinely new claims).`,
         ``,
       ].join("\n");
@@ -708,7 +709,7 @@ export function finalizeDoc(
       schemaVersion: 1,
       sourceMarkdown: markdownPath,
       lastResolvedAt: new Date().toISOString(),
-      citationBackend: "crossref",
+      citationBackend: loadConfig().citation_backend ?? "crossref",
       citations: entries,
     };
     writeFileSync(cachePath, JSON.stringify(sidecar, null, 2) + "\n", "utf-8");

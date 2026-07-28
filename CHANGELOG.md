@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.6.3.2 — `--verify-all` + inline-citation preservation
+
+### Fixes the user explicitly asked for
+
+- **`/paper-cite` now sees existing citations.** Previously the prompt only
+  surfaced the sidecar cache. Citations the LLM had already emitted in the
+  prose as `[N](<doi:...>)` markers were silently ignored, and the LLM
+  would re-mark them with `[CITE:topic]` — producing duplicates and breaking
+  the bibliography numbering.
+
+  The prompt now emits a `CITATIONS ALREADY PRESENT` block that lists
+  every inline `[N]` AND every cached `[N]` (inline takes priority; matching
+  DOIs are labelled `(in cache)`). The LLM skips these and only marks
+  genuinely new claims. The block also reports the highest `[N]` in use
+  so the LLM numbers new citations correctly.
+
+- **Bare `[N]` markers** (no inline DOI) are now scanned separately and
+  surfaced as `(bare marker in prose — no DOI resolved yet)`. The prompt
+  explicitly tells the LLM to call `find_citation` to backfill them.
+
+- **`--verify-all` flag.** Re-fetches every inline DOI from CrossRef even
+  when the sidecar has matching metadata. Use after retraction notices,
+  errata, or whenever the user wants to confirm every reference.
+
+  The CLI flag is on `paper-lab-finalize` (e.g. `paper-lab-finalize file.md --verify-all`).
+  The `/paper-cite` prompt also recognises the intent from user
+  instructions ("controlla TUTTE LE CITAZIONI", "verify all citations",
+  "ricontrolla tutto") and propagates the flag via the embedded finalize
+  command.
+
+### Bug found during the v0.6.3.2 implementation
+
+- **TDZ (temporal-dead-zone) error** in the prompt builder: `bareNumbers`
+  was used inside the cache-block construction before its `const` declaration.
+  The whole block-building code was wrapped in a silent `try/catch`, so the
+  block was never emitted and the user got a broken prompt. Fixed by
+  hoisting the bare-number scan and replacing the silent catch with a
+  `console.error` that future regressions will surface.
+
+### Audit fixes from the v0.6.3.2 hostile review
+
+- **MED-1 (prompt clarity)**: bare-marker entries in `CITATIONS ALREADY
+  PRESENT` now include "you MUST call find_citation to backfill them" so
+  the LLM knows to fill them in.
+- **LOW-1 (sidecar honesty)**: sidecar `citationBackend` is now read from
+  the user's config (`serper | exa | both | auto`), defaulting to
+  `crossref` only when unset. Previously hardcoded regardless of config.
+
+### Known limitations (documented; not bugs)
+
+- `--verify-all` only covers inline `[N](<doi:...>)` markers. Bare `[N]`
+  markers with no DOI are still served from the sidecar cache. Use
+  `/paper-cite` to re-resolve them. (HIGH-1 in the audit.)
+
 ## v0.6.3 — citation sidecar cache + audit fixes
 
 ### Sidecar cache (the main feature)
