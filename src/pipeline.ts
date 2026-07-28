@@ -249,11 +249,18 @@ export async function pipelineRewrite(
 export async function pipelineWrite(
   description: string,
   pi: ExtensionAPI,
-  opts?: { outputPath?: string },
+  opts?: { outputPath?: string; outputDir?: string },
 ): Promise<void> {
-  // Default: write to the CURRENT working directory (where pi is running).
-  // User can override with --output <path>.
-  const outPath = opts?.outputPath ?? join(process.cwd(), "paper-write-output.md");
+  // v0.7.x: the default outputDir is `<cwd>/paper-write-out/`, NOT a
+  // single hardcoded file. This is so multiple pipelineWrite calls
+  // (e.g. for different sections of the same paper) don't overwrite
+  // each other. The LLM must pass --output <path> to override the
+  // default file name; the default is "paper.md" inside outputDir.
+  // Hardcoding a single file (the previous `paper-write-output.md`
+  // default) was wrong: a user running two pipelineWrite calls would
+  // silently clobber the first output.
+  const outputDir = opts?.outputDir ?? join(process.cwd(), "paper-write-out");
+  const outPath = opts?.outputPath ?? join(outputDir, "paper.md");
   const notesPath = outPath.replace(/\.md$/, ".study-notes.md");
 
   const prompt = [
@@ -265,6 +272,8 @@ export async function pipelineWrite(
     `- Reporting: n=X per group, statistical test, p-value, effect size, 95% CI.`,
     `- No AI-tells: no "delve", "leverage", "elucidate", "crucially", "notably".`,
     `- Paragraphs of 3-6 sentences. Vary sentence length.`,
+    ``,
+    `If you want to write to a SPECIFIC file (e.g. for multiple sections of the same paper, or to avoid the default), pass --output <path>. The default file is ${outPath.replace(/\\/g, "/")} — multiple pipelineWrite calls without --output will OVERWRITE each other.`,
     ``,
     `Do these steps ALL IN ONE TURN:`,
     ``,
