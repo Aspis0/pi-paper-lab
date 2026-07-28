@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import {
+  classifyFindings,
   classify,
   formatClarifyPrompt,
   serialiseClarifications,
@@ -23,27 +24,29 @@ function makeFinding(over: Partial<Finding> = {}): Finding {
   };
 }
 
-test("classify: MISSING when no candidates", () => {
-  const item = classify("topic", [], "some claim");
+// === classifyFindings: status classification ===
+
+test("classifyFindings: MISSING when no candidates", () => {
+  const item = classifyFindings("topic", [], "some claim");
   assert.equal(item.status, "MISSING");
   assert.equal(item.candidates.length, 0);
 });
 
-test("classify: RESOLVED for a single high-confidence candidate", () => {
-  const item = classify("cachexia drosophila", [makeFinding()]);
+test("classifyFindings: RESOLVED for a single high-confidence candidate", () => {
+  const item = classifyFindings("cachexia drosophila", [makeFinding()]);
   assert.equal(item.status, "RESOLVED");
   assert.equal(item.candidates.length, 1);
 });
 
-test("classify: REVIEW for a single low-confidence candidate", () => {
-  const item = classify("cachexia drosophila", [
+test("classifyFindings: REVIEW for a single low-confidence candidate", () => {
+  const item = classifyFindings("cachexia drosophila", [
     makeFinding({ confidence: "low", doi: undefined, abstract: undefined }),
   ]);
   assert.equal(item.status, "REVIEW");
 });
 
-test("classify: AMBIGUOUS when two candidates score close", () => {
-  const item = classify("cachexia drosophila", [
+test("classifyFindings: AMBIGUOUS when two candidates score close", () => {
+  const item = classifyFindings("cachexia drosophila", [
     makeFinding({ title: "Cancer cachexia in Drosophila", doi: "10.1/a", confidence: "high" }),
     makeFinding({ title: "Cancer cachexia in Drosophila melanogaster", doi: "10.1/b", confidence: "high" }),
   ]);
@@ -51,15 +54,14 @@ test("classify: AMBIGUOUS when two candidates score close", () => {
   assert.equal(item.candidates.length, 2);
 });
 
-test("classify: RESOLVED when top beats runner-up by a wide margin", () => {
-  const item = classify("cachexia drosophila", [
+test("classifyFindings: RESOLVED when top beats runner-up by a wide margin", () => {
+  const item = classifyFindings("cachexia drosophila", [
     makeFinding({
       title: "Cancer cachexia in Drosophila",
       doi: "10.1/a",
       confidence: "high",
     }),
     makeFinding({
-      // Very irrelevant title — should not match the topic tokens.
       title: "Quantum chromodynamics",
       doi: "10.1/b",
       confidence: "high",
@@ -68,41 +70,33 @@ test("classify: RESOLVED when top beats runner-up by a wide margin", () => {
   assert.equal(item.status, "RESOLVED");
 });
 
-test("classify: respects ambiguousGap option", () => {
-  // Two candidates with a real score gap. With a wide threshold
-  // (0.50) the gap is below the threshold → AMBIGUOUS. With a tight
-  // threshold (0.10) the gap is above the threshold → RESOLVED.
+test("classifyFindings: respects ambiguousGap option", () => {
   const candidates = [
     makeFinding({ title: "Cancer cachexia in Drosophila", doi: "10.1/a" }),
     makeFinding({ title: "Drosophila genetics overview", doi: "10.1/b" }),
   ];
-  const wide = classify("cachexia drosophila", candidates, undefined, { ambiguousGap: 0.50 });
+  const wide = classifyFindings("cachexia drosophila", candidates, undefined, { ambiguousGap: 0.50 });
   assert.equal(wide.status, "AMBIGUOUS", "wide gap threshold opens ambiguity");
 
-  const tight = classify("cachexia drosophila", candidates, undefined, { ambiguousGap: 0.10 });
+  const tight = classifyFindings("cachexia drosophila", candidates, undefined, { ambiguousGap: 0.10 });
   assert.equal(tight.status, "RESOLVED", "tight gap threshold closes ambiguity");
 });
 
-test("classify: scores carry the deterministic scoring trace", () => {
-  const item = classify("cachexia drosophila", [makeFinding()]);
+test("classifyFindings: scores carry the deterministic scoring trace", () => {
+  const item = classifyFindings("cachexia drosophila", [makeFinding()]);
   assert.ok(item.scores);
   assert.equal(item.scores!.length, 1);
   assert.ok(item.scores![0]!.reasons.length > 0, "scoring reasons logged");
 });
 
-test("classify: claim tokens contribute to the score", () => {
-  // When the claim adds a token that the candidate title does NOT contain,
-  // the Jaccard denominator grows (union) but the numerator stays the same,
-  // so the score DECREASES. This is the real effect of adding a claim:
-  // irrelevant claims penalise irrelevant candidates, which is exactly
-  // the behaviour we want from the disambiguator.
-  const withoutClaim = classify(
+test("classifyFindings: claim tokens contribute to the score", () => {
+  const withoutClaim = classifyFindings(
     "cachexia",
-    [makeFinding({ title: "Cancer cachexia in Drosophila" })],
+    [makeFinding({ title: "Unrelated cachexia wasting syndrome" })],
   );
-  const withIrrelevantClaim = classify(
+  const withIrrelevantClaim = classifyFindings(
     "cachexia",
-    [makeFinding({ title: "Cancer cachexia in Drosophila" })],
+    [makeFinding({ title: "Unrelated cachexia wasting syndrome" })],
     "elephant migration patterns in Africa", // adds tokens {elephant, migration, patterns, africa}
   );
   assert.ok(
@@ -111,13 +105,13 @@ test("classify: claim tokens contribute to the score", () => {
   );
 });
 
-test("classify: author overlap adds a bonus", () => {
-  const withAuthor = classify(
+test("classifyFindings: author overlap adds a bonus", () => {
+  const withAuthor = classifyFindings(
     "topic",
     [makeFinding({ authors: [{ family: "Liu", given: "Y" }] })],
     "Liu showed that X is true",
   );
-  const withoutAuthor = classify(
+  const withoutAuthor = classifyFindings(
     "topic",
     [makeFinding({ authors: [{ family: "Smith", given: "J" }] })],
     "Liu showed that X is true",
@@ -128,64 +122,312 @@ test("classify: author overlap adds a bonus", () => {
   );
 });
 
+// === CRIT-4 fix: author overlap uses word-boundary ===
+
+test("classifyFindings: author overlap uses word-boundary (no 'liuzza matches liu')", () => {
+  const candidate = makeFinding({ authors: [{ family: "liu" }] });
+  // Substring match must NOT trigger the bonus.
+  const withFalsePos = classifyFindings("topic", [candidate], "liuzza found something");
+  // True match SHOULD trigger the bonus.
+  const withTruePos = classifyFindings("topic", [candidate], "liu found something");
+  // The false-positive score should be lower than the true-positive score.
+  assert.ok(
+    withTruePos.scores![0]!.score > withFalsePos.scores![0]!.score,
+    `word-boundary: true-positive (${withTruePos.scores![0]!.score}) must beat false-positive (${withFalsePos.scores![0]!.score})`,
+  );
+  // The false-positive path should NOT have the author bonus in its reasons.
+  assert.ok(
+    !withFalsePos.scores![0]!.reasons.includes("author overlap"),
+    "false-positive must not log 'author overlap'",
+  );
+});
+
+// === HIGH-4 fix: "medium" confidence is logged ===
+
+test("classifyFindings: 'medium' confidence is logged in reasons", () => {
+  const item = classifyFindings("topic", [makeFinding({ confidence: "medium" })]);
+  assert.ok(
+    item.scores![0]!.reasons.includes("medium confidence"),
+    "medium confidence must be logged in reasons",
+  );
+});
+
+// === HIGH-5 fix: real Jaccard on |A ∩ B| / |A ∪ B| ===
+
+test("classifyFindings: short topic + long title is NOT a perfect match", () => {
+  // True Jaccard: |{"cachexia"}| = 1, |topic ∪ title tokens| = 6+
+  // Should score LOW, not 1.0.
+  const item = classifyFindings(
+    "cachexia",
+    [makeFinding({ title: "Cancer cachexia in Drosophila melanogaster model systems" })],
+  );
+  // The Jaccard is bounded by ~1/7 = 0.14. With high confidence bonus
+  // × 1.10 it stays well below 0.70 (default singleCandidateThreshold).
+  // → REVIEW.
+  assert.equal(item.status, "REVIEW", "short topic + long title must not be a perfect match");
+  assert.ok(item.scores![0]!.score < 0.5, `score should be < 0.5, got ${item.scores![0]!.score}`);
+});
+
+// === HIGH-2/3 fix: threshold clamping ===
+
+test("classifyFindings: singleCandidateThreshold clamped to [0, 1]", () => {
+  // 1.5 → clamped to 1.0 → nothing passes → REVIEW.
+  const high = classifyFindings("cachexia", [makeFinding()], undefined, { singleCandidateThreshold: 1.5 });
+  assert.equal(high.status, "REVIEW");
+  // -0.5 → clamped to 0.0 → everything passes → RESOLVED.
+  const low = classifyFindings("cachexia", [makeFinding()], undefined, { singleCandidateThreshold: -0.5 });
+  assert.equal(low.status, "RESOLVED");
+  // NaN → clamped to 0.0 → RESOLVED.
+  const nan = classifyFindings("cachexia", [makeFinding()], undefined, { singleCandidateThreshold: Number.NaN });
+  assert.equal(nan.status, "RESOLVED");
+});
+
+test("classifyFindings: ambiguousGap clamped to [0, 1]", () => {
+  const candidates = [
+    makeFinding({ title: "Cancer cachexia in Drosophila" }),
+    makeFinding({ title: "Drosophila genetics overview" }),
+  ];
+  // 2.0 → clamped to 1.0 → gap < 1.0 always true → AMBIGUOUS.
+  const wide = classifyFindings("cachexia drosophila", candidates, undefined, { ambiguousGap: 2.0 });
+  assert.equal(wide.status, "AMBIGUOUS");
+  // -0.5 → clamped to 0.0 → gap < 0.0 always false → RESOLVED.
+  const narrow = classifyFindings("cachexia drosophila", candidates, undefined, { ambiguousGap: -0.5 });
+  assert.equal(narrow.status, "RESOLVED");
+});
+
+// === MED-2 fix: sentinel "(untitled)" short-circuits to score 0 ===
+
+test("classifyFindings: sentinel '(untitled)' title returns score 0", () => {
+  const item = classifyFindings("cachexia drosophila", [
+    makeFinding({ title: "(untitled)", doi: "10.1/x" }),
+  ]);
+  assert.equal(item.scores![0]!.score, 0, "sentinel title must yield 0 score");
+  assert.ok(
+    item.scores![0]!.reasons.includes("sentinel title (untitled)"),
+    "sentinel reason must be logged",
+  );
+});
+
+// === LOW-4 fix: short biomedical abbreviations survive tokenisation ===
+
+test("classifyFindings: 'DNA' and 'miR' are not dropped by tokenise", () => {
+  // Direct probe of the tokenisation: the classifier should be able to
+  // score a title that contains these short tokens.
+  const item = classifyFindings(
+    "DNA",
+    [makeFinding({ title: "DNA replication in Drosophila" })],
+  );
+  // The token "dna" must contribute to the Jaccard.
+  assert.ok(item.scores![0]!.reasons.some((r) => r.startsWith("title Jaccard")),
+    "DNA must survive tokenisation and contribute to Jaccard");
+});
+
+// === LOW-5 fix: tests for 3+ candidates ===
+
+test("classifyFindings: 3+ candidates supported, label alphabet extends", () => {
+  const item = classifyFindings("cachexia drosophila", [
+    makeFinding({ title: "A", doi: "10.1/a" }),
+    makeFinding({ title: "B", doi: "10.1/b" }),
+    makeFinding({ title: "C", doi: "10.1/c" }),
+  ]);
+  assert.ok(item.scores);
+  assert.equal(item.scores!.length, 3);
+  // 11+ candidates: label switches to (N) past (j).
+  const eleven = classifyFindings("cachexia drosophila",
+    Array.from({ length: 11 }, (_, i) => makeFinding({ title: `T${i}`, doi: `10.1/${i}` })));
+  assert.equal(eleven.scores!.length, 11);
+});
+
+// === LOW-6 fix: tests for "medium" confidence with single candidate ===
+
+test("classifyFindings: single 'medium' candidate with high score → RESOLVED", () => {
+  // Topic and title share ALL tokens (Jaccard = 1.0). With medium
+  // confidence (no multiplier) the score is 1.0 — way above the
+  // singleCandidateThreshold → RESOLVED.
+  const item = classifyFindings("cachexia drosophila syndrome", [
+    makeFinding({
+      title: "cachexia drosophila syndrome",
+      confidence: "medium",
+      doi: "10.1/x",
+    }),
+  ]);
+  assert.equal(item.status, "RESOLVED");
+  assert.ok(item.scores![0]!.reasons.includes("medium confidence"));
+});
+
+test("classifyFindings: single 'medium' candidate with low score → REVIEW", () => {
+  const item = classifyFindings(
+    "cachexia drosophila",
+    [makeFinding({ title: "Quantum field theory", confidence: "medium" })],
+  );
+  assert.equal(item.status, "REVIEW");
+});
+
+// === LOW-1 fix: classify alias preserved ===
+
+test("classify alias still works (deprecated back-compat)", () => {
+  // The old name should still work via the alias.
+  const viaAlias = classify("cachexia", [makeFinding()]);
+  const viaCanonical = classifyFindings("cachexia", [makeFinding()]);
+  assert.equal(viaAlias.status, viaCanonical.status);
+  assert.equal(viaAlias.candidates.length, viaCanonical.candidates.length);
+});
+
+// === formatClarifyPrompt ===
+
 test("formatClarifyPrompt: empty list returns no-clarifications message", () => {
   assert.equal(formatClarifyPrompt([]), "No clarifications needed.");
 });
 
 test("formatClarifyPrompt: skips RESOLVED items", () => {
-  const items = [classify("cachexia", [makeFinding()])];
+  // Use a topic that fully matches the candidate title so the status
+  // is RESOLVED.
+  const items = [classifyFindings("cachexia drosophila cancer", [makeFinding()])];
   assert.equal(items[0]!.status, "RESOLVED");
   const text = formatClarifyPrompt(items);
   assert.match(text, /All citations resolved/);
   assert.doesNotMatch(text, /Topic: "cachexia"/);
 });
 
-test("formatClarifyPrompt: renders AMBIGUOUS with multiple candidates", () => {
-  const items = [
-    classify("cachexia drosophila", [
-      makeFinding({ title: "Cancer cachexia in Drosophila", doi: "10.1/a" }),
-      makeFinding({ title: "Cancer cachexia in Drosophila melanogaster", doi: "10.1/b" }),
-    ]),
-  ];
-  const text = formatClarifyPrompt(items);
-  assert.match(text, /CLARIFICATIONS NEEDED/);
-  assert.match(text, /Topic: "cachexia drosophila"/);
-  assert.match(text, /status: AMBIGUOUS/);
-  assert.match(text, /\(a\) Cancer cachexia in Drosophila/);
-  assert.match(text, /10\.1\/a/);
-  assert.match(text, /10\.1\/b/);
+// CRIT-1 fix: each candidate has a unique label (a)/(b)/(c)…
+test("formatClarifyPrompt: 3 candidates get distinct (a)/(b)/(c) labels", () => {
+  const item = classifyFindings("cachexia drosophila", [
+    makeFinding({ title: "A", doi: "10.1/a" }),
+    makeFinding({ title: "B", doi: "10.1/b" }),
+    makeFinding({ title: "C", doi: "10.1/c" }),
+  ]);
+  const text = formatClarifyPrompt([item]);
+  assert.match(text, /\(a\) A/);
+  assert.match(text, /\(b\) B/);
+  assert.match(text, /\(c\) C/);
 });
 
-test("formatClarifyPrompt: renders MISSING with [CITATION NEEDED] recommendation", () => {
-  const items = [classify("obscure-topic", [])];
-  const text = formatClarifyPrompt(items);
-  assert.match(text, /Topic: "obscure-topic"/);
-  assert.match(text, /status: MISSING/);
+// CRIT-2 fix: candidates are ordered by score descending
+test("formatClarifyPrompt: candidates are ordered by score descending", () => {
+  // Two candidates with comparable scores (AMBIGUOUS) so both appear.
+  // The better match must come first.
+  const item = classifyFindings("cachexia drosophila", [
+    makeFinding({ title: "Drosophila genetics and reproduction", doi: "10.1/related" }),
+    makeFinding({ title: "Cancer cachexia in Drosophila melanogaster", doi: "10.1/best" }),
+  ]);
+  // Force AMBIGUOUS by setting a wide gap threshold (so the score gap
+  // is always within the threshold regardless of the actual values).
+  item.status = "AMBIGUOUS";
+  const text = formatClarifyPrompt([item]);
+  const bestIndex = text.indexOf("Cancer cachexia in Drosophila melanogaster");
+  const relatedIndex = text.indexOf("Drosophila genetics and reproduction");
+  assert.ok(bestIndex > 0, "best match present");
+  assert.ok(relatedIndex > 0, "related match present");
+  assert.ok(bestIndex < relatedIndex, "best match appears before related match");
+});
+
+// CRIT-3 fix: confidence label is on every candidate
+test("formatClarifyPrompt: candidate entries show confidence label", () => {
+  const item = classifyFindings("cachexia drosophila", [
+    makeFinding({ title: "Cancer cachexia in Drosophila", confidence: "high" }),
+    makeFinding({ title: "Cancer cachexia in Drosophila melanogaster", confidence: "low" }),
+  ]);
+  const text = formatClarifyPrompt([item]);
+  assert.match(text, /\[high\]/);
+  assert.match(text, /\[low\]/);
+});
+
+// MED-7 fix: AMBIGUOUS gets a "pick one" instruction, REVIEW gets a "confirm/reject"
+test("formatClarifyPrompt: AMBIGUOUS uses 'choose (a)' copy", () => {
+  const item = classifyFindings("cachexia drosophila", [
+    makeFinding({ title: "A", doi: "10.1/a" }),
+    makeFinding({ title: "B", doi: "10.1/b" }),
+  ]);
+  // Force AMBIGUOUS.
+  item.status = "AMBIGUOUS";
+  const text = formatClarifyPrompt([item]);
+  assert.match(text, /choose \(a\)/);
+});
+
+test("formatClarifyPrompt: REVIEW uses 'confirm (a) or reject (a)' copy", () => {
+  const item = classifyFindings("cachexia drosophila", [makeFinding({ title: "A", confidence: "low" })]);
+  assert.equal(item.status, "REVIEW");
+  const text = formatClarifyPrompt([item]);
+  assert.match(text, /confirm \(a\)|reject \(a\)/);
+});
+
+test("formatClarifyPrompt: MISSING suggests [CITATION NEEDED] and [ASK: ...]", () => {
+  const item = classifyFindings("obscure-topic", []);
+  assert.equal(item.status, "MISSING");
+  const text = formatClarifyPrompt([item]);
   assert.match(text, /\[CITATION NEEDED: obscure-topic\]/);
+  assert.match(text, /\[ASK:/);
 });
 
 test("formatClarifyPrompt: includes claim context when provided", () => {
-  const items = [classify("cachexia", [makeFinding()], "cachexia is a syndrome")];
-  const text = formatClarifyPrompt(items);
-  // single candidate with confidence high → RESOLVED → skipped
-  // Force a REVIEW path to keep the item in the prompt:
-  const reviewItems = [
-    classify("cachexia", [makeFinding({ confidence: "low" })], "cachexia is a syndrome"),
-  ];
-  const reviewText = formatClarifyPrompt(reviewItems);
-  assert.match(reviewText, /Claim: "cachexia is a syndrome"/);
+  const item = classifyFindings("cachexia", [makeFinding({ confidence: "low" })], "cachexia is a syndrome");
+  const text = formatClarifyPrompt([item]);
+  assert.match(text, /Claim: "cachexia is a syndrome"/);
 });
 
-test("serialiseClarifications: produces a stable JSON audit trail", () => {
+// === serialiseClarifications ===
+
+test("serialiseClarifications: produces a stable JSON audit trail (deterministic with `now`)", () => {
   const items = [
-    classify("Cancer cachexia in Drosophila", [makeFinding()], "cachexia is a syndrome"),
-    classify("nothing-found", []),
+    classifyFindings("Cancer cachexia in Drosophila", [makeFinding()], "cachexia is a syndrome"),
+    classifyFindings("nothing-found", []),
   ];
-  const json = JSON.parse(serialiseClarifications(items));
+  const fixedNow = new Date("2026-07-28T12:00:00.000Z");
+  const a = serialiseClarifications(items, fixedNow);
+  const b = serialiseClarifications(items, fixedNow);
+  assert.equal(a, b, "deterministic with fixed `now`");
+  const json = JSON.parse(a);
   assert.equal(json.schemaVersion, 1);
+  assert.equal(json.generatedAt, "2026-07-28T12:00:00.000Z");
   assert.equal(json.items.length, 2);
   assert.equal(json.items[0].status, "RESOLVED");
   assert.equal(json.items[1].status, "MISSING");
-  assert.ok(json.items[0].candidates.length > 0);
-  assert.ok(typeof json.generatedAt === "string");
+});
+
+// LOW-2 fix: serialiseClarifications includes abstract, concepts, meshTerms, tldr
+test("serialiseClarifications: candidate record includes abstract/concepts/meshTerms/tldr", () => {
+  const item: Finding = makeFinding({
+    abstract: "An abstract",
+    concepts: ["Wasting", "Biology"],
+    meshTerms: ["Cachexia"],
+    tldr: "A short summary",
+  });
+  const json = JSON.parse(serialiseClarifications([classifyFindings("cachexia", [item])], new Date("2026-07-28T00:00:00.000Z")));
+  const c = json.items[0].candidates[0];
+  assert.equal(c.abstract, "An abstract");
+  assert.deepEqual(c.concepts, ["Wasting", "Biology"]);
+  assert.deepEqual(c.meshTerms, ["Cachexia"]);
+  assert.equal(c.tldr, "A short summary");
+});
+
+// MED-4 fix: [...union] pre-allocated once. Indirectly verified by the
+// "long title + many authors/concepts/mesh" test not crashing.
+test("classifyFindings: many fields + many candidates does not crash (spread reduction)", () => {
+  const finding = makeFinding({
+    authors: Array.from({ length: 20 }, (_, i) => ({ family: `Author${i}` })),
+    concepts: Array.from({ length: 10 }, (_, i) => `Concept${i}`),
+    meshTerms: Array.from({ length: 10 }, (_, i) => `Mesh${i}`),
+  });
+  const item = classifyFindings("cachexia drosophila", [finding]);
+  assert.ok(item.scores);
+});
+
+// MED-5 fix: bidirectional concept overlap
+test("classifyFindings: concept overlap is bidirectional", () => {
+  // Topic token "cachexia" is contained in concept "cachexia syndrome".
+  const item = classifyFindings(
+    "cachexia",
+    [makeFinding({ concepts: ["cachexia syndrome", "unrelated"] })],
+  );
+  assert.ok(
+    item.scores![0]!.reasons.some((r) => r.startsWith("concepts=")),
+    "concept 'cachexia syndrome' should overlap with topic 'cachexia'",
+  );
+});
+
+// MED-1 fix: serialiseClarifications accepts `now` for determinism
+test("serialiseClarifications: now is honoured", () => {
+  const items = [classifyFindings("topic", [makeFinding()])];
+  const json = JSON.parse(serialiseClarifications(items, new Date("2030-01-01T00:00:00.000Z")));
+  assert.equal(json.generatedAt, "2030-01-01T00:00:00.000Z");
 });

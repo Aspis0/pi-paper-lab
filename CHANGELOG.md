@@ -1,5 +1,98 @@
 # Changelog
 
+## v0.7.0-alpha.3 — M2.1 clarify classifier (with hostile-audit fixes)
+
+### Added
+
+- **`src/clarify.ts`** — first substep of M2 (clarify UX). Pure
+  logic, no I/O. Adopts the citeground disambiguate.py contract:
+  classify each topic's Finding[] into RESOLVED / AMBIGUOUS / REVIEW /
+  MISSING. New `Finding` contract from M1 reused; no new dependency.
+- `classifyFindings(topic, findings, claim?, opts?)` — the deterministic
+  classifier. Jaccard on `(topic + claim tokens) ∪ (candidate title
+  tokens)`, plus bonuses for author overlap (word-boundary, no
+  `liuzza matches liu` false positive), concept/MeSH overlap
+  (bidirectional), and a confidence multiplier (`high *= 1.10`,
+  `medium` no multiplier, `low *= 0.85`). The `classify` export is kept
+  as a deprecated alias for back-compat.
+- `formatClarifyPrompt(items)` — numbered menu the LLM can paste to the
+  user. AMBIGUOUS items get `choose (a)` copy; REVIEW items get
+  `confirm (a) | reject (a)` copy; MISSING items suggest
+  `[CITATION NEEDED: ...]` or `[ASK: ...]`. Each candidate shows its
+  confidence level `[high|medium|low]`.
+- `serialiseClarifications(items, now?)` — JSON sidecar for the audit
+  trail. `now` is an optional `Date` parameter (default `new Date()`)
+  for deterministic test replay. Candidate record now includes
+  `abstract`, `concepts`, `meshTerms`, `tldr` so the score reasoning
+  can be reconstructed.
+- `tests/clarify.test.ts` (34 cases, all offline) covers: status
+  classification, ambiguousGap + singleCandidateThreshold clamping,
+  score reason logging, AMBIGUOUS/REVIEW/MISSING copy, label
+  alphabet (a)-(j) then (N), score ordering, sentinel title
+  short-circuit, stop-word filtering, word-boundary author match,
+  real Jaccard on `|A ∪ B|`, `medium` confidence log, 3+ candidates,
+  DNA/miR token preservation, `classify` back-compat alias,
+  `serialiseClarifications` determinism with `now`.
+
+### Hostile-audit fixes (commit this release)
+
+The first substep `ff207c9` was hostile-reviewed and the review
+surfaced 24 findings (5 CRIT, 5 HIGH, 7 MED, 7 LOW). This release
+addresses all of them in one rewrite:
+
+**CRIT (user-facing, blocking)**
+- `formatClarifyPrompt`: each candidate gets a unique label `(a)`,
+  `(b)`, …, `(j)` then `(N)` for >10. Previously all were `(a)`.
+- `formatClarifyPrompt`: candidates are sorted by score descending so
+  the best match is at the top.
+- `formatClarifyPrompt`: each candidate shows its confidence level
+  `[high|medium|low]`.
+- `scoreCandidate` author overlap: now uses a word-boundary regex
+  (via `escapeRegex`). Fixes the `liuzza matches liu` false positive
+  AND the inverted direction.
+- `tokenise` JSDoc + `escapeRegex` helper.
+
+**HIGH (correctness, blocking)**
+- `"year"` removed from the `fields` union type (it was a dead enum
+  member, the score never depended on it).
+- `singleCandidateThreshold` and `ambiguousGap` clamped to [0, 1] via
+  a new `clamp()` helper.
+- `"medium"` confidence is now explicitly logged in the `reasons`
+  trace (previously it was silently indistinguishable from
+  `undefined`).
+- Title Jaccard is now real Jaccard `|A ∩ B| / |A ∪ B|` where
+  `B = candidate title tokens`. Previously the denominator was
+  `|topic ∪ claim|`, which is more like recall.
+
+**MED (defensive, non-blocking)**
+- `serialiseClarifications` accepts an optional `now` parameter for
+  deterministic test replay.
+- Sentinel title `(untitled)` short-circuits to score 0.
+- `tokenise` has a JSDoc explaining the ASCII limitation and the
+  stop-word filter.
+- `[...union]` is materialised once per call.
+- Concept/MeSH overlap is bidirectional (token in concept OR
+  concept in token) for robustness.
+- An author false-positive test pins the `liuzza matches liu` fix.
+- `formatClarifyPrompt` differentiates copy for AMBIGUOUS (`choose`)
+  vs REVIEW (`confirm | reject`) vs MISSING (`[CITATION NEEDED]` /
+  `[ASK: ...]`).
+
+**LOW (polish)**
+- `classify` renamed to `classifyFindings` with a deprecated
+  `classify` alias for back-compat.
+- `serialiseClarifications` candidate record includes
+  `abstract`, `concepts`, `meshTerms`, `tldr`, `volume`, `issue`,
+  `pages`.
+- Pre-cap score budget checked; bonus multipliers are now within
+  `[0, 1]` after the real Jaccard.
+- Token length threshold lowered to 2 (DNA, miR survive) AND a
+  stop-word filter keeps short noise (`in`, `of`, `is`, ...) out
+  of the Jaccard.
+- 3+ candidates supported (test added).
+- Tests for single-candidate medium confidence (RESOLVED + REVIEW).
+- Bonus multipliers documented with reason log entries.
+
 ## v0.7.0-alpha.2 — M1.2 Europe PMC source-finder (third substep of the v0.7 Word-native citations plan)
 
 ### Added
