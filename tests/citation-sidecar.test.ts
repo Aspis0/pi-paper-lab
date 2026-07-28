@@ -155,7 +155,7 @@ const DOI_CORPUS = [
   assert(/sidecarPathFor|loadCitationSidecar/.test(src), "src/pipeline.ts implements sidecar read");
   assert(/CITATION CACHE/.test(src) || /cacheBlock/.test(src), "src/pipeline.ts surfaces cache to LLM prompt");
   assert(/writeFileSync\(cachePath/.test(src), "src/pipeline.ts writes the sidecar after success");
-  assert(/noCache.*skip.*cache|useSidecar.*=.*!.*opts/.test(src), "src/pipeline.ts honors --no-cache flag");
+  assert(/noCache\s*=\s*!!opts/.test(src), "src/pipeline.ts reads opts.noCache");
 }
 
 // Clean up

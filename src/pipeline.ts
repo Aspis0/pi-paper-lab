@@ -292,10 +292,27 @@ export async function pipelineWrite(
 }
 
 // === Build the LLM cite-mark prompt ===
-function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean, userInstructions?: string): string {
+//
+// Exported (as `export function`) so tests can introspect the rendered prompt
+// without spinning up an LLM. Production code paths use it only via
+// pipelineCite / pipelineRewrite / pipelineWrite — the export does not
+// change runtime behaviour.
+export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean, userInstructions?: string): string {
   const userBlock = userInstructions
     ? `USER INSTRUCTIONS (follow these):\n${userInstructions}\n\n`
     : "";
+
+  // Detect "verify all citations" intent from the user's free-form instructions.
+  // The CLI/LLM enables --verify-all when the user writes something like:
+  //   - "controlla TUTTE LE CITAZIONI"
+  //   - "verify all citations" / "check all references"
+  //   - "ricontrolla tutto" / "refresh metadata"
+  // This is English+Italian heuristic — tight on false positives (must contain
+  // both intent verb and a list word).
+  const verifyAll = /\b(?:verify|check|recheck|re-?check|ricontrolla|controlla|verifica)\b[\s\S]{0,40}\b(?:all|every|ogni|tutte|tutto|all citations|all references|le citazioni|tutte le citazioni)\b/i
+    .test(userInstructions ?? "")
+    || /refresh.*(?:metadata|citations|references|tutto|cache)/i.test(userInstructions ?? "");
+
 
   const rewriteBlock = includeRewrite
     ? [`STEP 1 — REWRITE + AI CHECK:`,
@@ -319,27 +336,89 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
   // every cached `[N] → doi` so the model can reuse it verbatim.
   //
   // Format is human-readable markdown so the model can grep it cheaply.
+  //
+  // v0.6.3.1: ALSO scan the inline text for any `[N](<doi:...>)` markers
+  // that the user or a previous run already wrote. The LLM needs to see BOTH:
+  //   1. citations in the sidecar (cached metadata, no DOI lookup needed)
+  //   2. citations in the inline text (already cited, do not re-mark)
+  // Without (2), the LLM would re-mark already-cited claims with [CITE:topic],
+  // causing duplicate citations and breaking the bibliography.
   let cacheBlock = "";
   try {
     const sidecar = loadCitationSidecar(filePath);
-    if (sidecar.size > 0) {
-      const lines = [...sidecar.entries()]
+    // Inline scan: every [N](<doi:...>) or [N](doi:...) already in the prose.
+    // Maps N → doi for the prompt; takes priority over the sidecar if both exist.
+    const inlineMap = new Map<number, string>();
+    const inlineRe = /\[(\d+)\]\((?:<doi:\s*([^>\n]+)>|doi:\s*([^)>\n]+))\)/g;
+    let im: RegExpExecArray | null;
+    while ((im = inlineRe.exec(text)) !== null) {
+      const num = parseInt(im[1]);
+      const doi = (im[2] ?? im[3] ?? "").replace(/[;,.]$/, "").trim();
+      if (doi) inlineMap.set(num, doi);
+    }
+
+    const inlineCount = inlineMap.size;
+    const sidecarCount = sidecar.size;
+    // Always collect bare [N] numbers (even when no DOIs are present),
+    // because they consume citation slots and the LLM must number past them.
+    const bareNumbers = new Set<number>();
+    const bareReForCount = /(?<!<sup>)\[(\d+)\](?!\()/g;
+    let br: RegExpExecArray | null;
+    while ((br = bareReForCount.exec(text)) !== null) {
+      const n = parseInt(br[1]);
+      if (n >= 1 && n < 1000) bareNumbers.add(n);
+    }
+    if (inlineCount > 0 || sidecarCount > 0 || bareNumbers.size > 0) {
+      // Merge inline (priority) over sidecar. Inline wins because the user
+      // just wrote it; sidecar could be stale from a previous session.
+      const merged = new Map<number, { doi: string; source: "inline" | "cache" }>();
+      for (const [num, entry] of sidecar.entries()) {
+        if (entry.doi) merged.set(num, { doi: entry.doi, source: "cache" });
+      }
+      for (const [num, doi] of inlineMap.entries()) {
+        // If inline matches the cached DOI for the same [N], prefer the
+        // "(in cache)" label — nothing new to report beyond the cache. The
+        // inline presence only UPGRADES the label when the inline DOI
+        // differs from the cached one (the user just edited the prose to
+        // repoint the reference).
+        const existing = merged.get(num);
+        if (existing && existing.doi === doi) continue;
+        merged.set(num, { doi, source: "inline" });
+      }
+      const lines = [...merged.entries()]
         .sort((a, b) => a[0] - b[0])
-        .map(([num, entry]) => `  [${num}] → ${entry.doi ?? "(no DOI)"}${entry.doi ? "" : " — placeholder"}`);
+        .map(([num, { doi, source }]) => {
+          const tag = source === "inline" ? " (in text)" : " (in cache)";
+          return `  [${num}] → ${doi}${tag}`;
+        });
+      // Bare [N] markers without any DOI in prose or cache — emit as
+      // `[N]  (bare, no DOI)` entries so the LLM knows to BACKFILL them
+      // (run find_citation to assign a DOI, OR user must provide one).
+      for (const n of [...bareNumbers].sort((a, b) => a - b)) {
+        if (!merged.has(n)) lines.push(`  [${n}]  (bare marker in prose — no DOI resolved yet)`);
+      }
+      const allKnownN = new Set<number>([...merged.keys(), ...bareNumbers]);
+      const maxN = Math.max(0, ...allKnownN);
       cacheBlock = [
         ``,
-        `CITATION CACHE (already resolved — REUSE these DOIs, do NOT call find_citation for them again):`,
-        `  File: ${sidecarPathFor(filePath)}`,
+        `CITATIONS ALREADY PRESENT (do NOT mark these claims again with [CITE:...]; re-use the existing [N](<doi:...>) verbatim):`,
+        `  Source: ${inlineCount > 0 ? `inline text (${inlineCount})` : ""}${inlineCount > 0 && sidecarCount > 0 ? " + " : ""}${sidecarCount > 0 ? `sidecar cache (${sidecarCount})` : ""}`,
+        `  Highest [N] in use: ${maxN} — assign NEW citations starting from [${maxN + 1}].`,
         ...lines,
         ``,
-        `For every [N] in the CACHE: keep it as [N](<doi:...>) verbatim.`,
-        `Only call find_citation for claims that have NO existing [N] marker.`,
-        `If a claim was already cited as [N] and you can find it in the cache, you don't need to do anything.`,
+        `For each [N] in the list above:`,
+        `  - If the [N](<doi:...>) marker is ALREADY in the prose, leave it as-is.`,
+        `  - If the [N] is only in the cache (bare marker in prose), re-attach: replace [N] with [N](<doi:...>).`,
+        `  - Do NOT call find_citation for any [N] that already has a resolved DOI in this list.`,
+        `Only call find_citation for claims that are NOT yet cited at all (genuinely new claims).`,
         ``,
       ].join("\n");
     }
-  } catch {
-    // Sidecar missing or malformed — that's fine, the cacheBlock stays empty.
+  } catch (err) {
+    // Real bug: silently swallowed in earlier versions, then we shipped
+    // v0.6.3 with TDZ (using `bareNumbers` before its `const` declaration).
+    // Surface to stderr so future regressions show up loudly.
+    console.error("[paper-lab-finalize] WARN: failed to build CITATIONS ALREADY PRESENT block:", err?.message ?? err);
   }
 
   return [
@@ -353,10 +432,10 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
     ``,
     rewriteBlock,
     studyBlock,
-    `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each NEW claim (batch parallel). For claims already cited in the CACHE block above, leave the existing [N](<doi:...>) markers as-is — do NOT re-search. Assign NEW [N] sequentially starting from max(existing)+1, ALWAYS using angle brackets around the DOI: [N](<doi:10.xxxx>). Write the resolved file to ${filePath}.`,
+    `STEP ${startStep} — CITE: Mark every factual claim that is NOT already cited with [CITE:topic]. Read the CITATIONS ALREADY PRESENT block above carefully — every [N] listed there is already valid; do NOT re-search or re-mark those claims. Call find_citation ONLY for genuinely new claims (batch parallel). Assign NEW [N] sequentially starting from max(existing)+1 (the block tells you the current maximum). ALWAYS use angle brackets around the DOI: [N](<doi:10.xxxx>). Write the resolved file to ${filePath}.`,
     `STEP ${startStep + 1} — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
-    `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}`,
-    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry. To force fresh DOI resolution (bypass cache), add \`--no-cache\` at the end of the command above.`,
+    `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}${verifyAll ? " --verify-all" : ""}`,
+    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry. To force fresh DOI resolution (bypass cache), add \`--no-cache\` at the end. To verify ALL citations (including ones with cached DOIs), add \`--verify-all\`.`,
     `STEP ${startStep + 2} — REPORT: Tell the user the .docx path. Do NOT read the .docx (binary).`,
     ``,
     `Do ALL steps in ONE turn. Do not stop between steps.`,
@@ -368,16 +447,22 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
 // The LLM only needs to write the .md and call this.
 export function finalizeDoc(
   markdownPath: string,
-  opts?: { noCache?: boolean },
+  opts?: { noCache?: boolean; verifyAll?: boolean },
 ): { docxPath: string; bibliographyCount: number; error?: string } {
   const docxPath = markdownPath.replace(/\.md$/i, ".docx");
   let text = readFileSync(markdownPath, "utf-8");
 
-  // v0.6.3: --no-cache flag forces fresh CrossRef resolution. Useful after
-  // the user manually edits the sidecar JSON or when they want to refresh
-  // stale metadata (e.g., a paper was retracted). We honor this by simply
-  // NOT loading the sidecar below; everything else is the same.
-  const useSidecar = !opts?.noCache;
+  // v0.6.3: --no-cache forces fresh CrossRef resolution.
+  // v0.6.3.2: --verify-all is a stronger form — invalidate the cache for
+  // every [N] that has an inline DOI (still trusts bare markers with no DOI).
+  // Use when the user says "controlla TUTTE LE CITAZIONI" or after a paper
+  // retraction, journal errata, etc.
+  const noCache = !!opts?.noCache;
+  const verifyAll = !!opts?.verifyAll;
+  // `trustCache` is the central knob — both flags degrade it. With verifyAll,
+  // we still LOAD the sidecar (so we can know which [N] had a DOI), but we
+  // ignore the cached Vancouver metadata for ones with inline DOIs.
+  const trustCache = !noCache && !verifyAll;
 
   // 0. Strip any existing References section (idempotent — safe to re-run)
   // Step 0a: If the last line is exactly "## References" (no content after), remove it.
@@ -404,9 +489,19 @@ export function finalizeDoc(
   // the inline-`[N](doi:X)` scan below will EVICT a cached entry if the
   // user changed the DOI for that [N] in the prose. Without this, silently
   // trusting the cache would let a stale DOI persist forever.
-  const sidecar = useSidecar ? loadCitationSidecar(markdownPath) : new Map<number, SidecarEntry>();
-  for (const [num, entry] of sidecar.entries()) {
-    citations.set(num, entry.vancouver);
+  //
+  // v0.6.3.2 / verifyAll: with --verify-all we still load the sidecar (so we
+  // can detect conflicts between cached DOIs and inline DOIs), but we SKIP
+  // the trust-the-cache write below — every [N] with an inline DOI gets a
+  // fresh CrossRef pass. Bare [N] markers without inline DOIs STILL pull
+  // from the sidecar (we have no way to re-resolve them without an LLM).
+  const sidecar = (trustCache || verifyAll)
+    ? loadCitationSidecar(markdownPath)
+    : new Map<number, SidecarEntry>();
+  if (trustCache) {
+    for (const [num, entry] of sidecar.entries()) {
+      citations.set(num, entry.vancouver);
+    }
   }
 
   // Primary: angle-bracket form [N](<doi:XXX>) — handles ALL DOIs including parens
@@ -423,10 +518,17 @@ export function finalizeDoc(
     // DOIs. If they differ, the user has re-pointed [N] at a different paper
     // — evict the stale entry and re-fetch from CrossRef. If they match,
     // skip the (expensive) lookup entirely.
-    if (citations.has(num)) {
+    //
+    // verifyAll: skip the cache-hit shortcut entirely. Every inline DOI
+    // gets re-fetched. Use when the user wants to verify ALL citations.
+    if (citations.has(num) && !verifyAll) {
       const cachedEntry = sidecar.get(num);
       if (cachedEntry?.doi === doi) continue; // cache hit, DOI matches
       citations.delete(num); // stale or first-time — start fresh
+    } else if (verifyAll) {
+      // verifyAll: drop any cached entry that was pre-populated above.
+      // The loop body below re-fetches via CrossRef unconditionally.
+      citations.delete(num);
     }
     try {
       const work = lookupDoiSync(doi);

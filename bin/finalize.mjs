@@ -102,10 +102,15 @@ async function loadPipeline() {
 // ── 3. CLI entry ───────────────────────────────────────────────────────
 function usageAndExit(msg) {
   if (msg) console.error("Error:", msg);
-  console.error("Usage: paper-lab-finalize <path-to.md> [--no-cache] [--help] [--version]");
-  console.error("  --no-cache    Force fresh DOI resolution via CrossRef, ignoring any sidecar cache.");
-  console.error("                Use after manually editing the .citations.json sidecar or when");
-  console.error("                refreshing stale metadata.");
+  console.error("Usage: paper-lab-finalize <path-to.md> [--no-cache] [--verify-all] [--help] [--version]");
+  console.error("  --no-cache     Force fresh DOI resolution via CrossRef, ignoring any sidecar cache.");
+  console.error("                 Use after manually editing the .citations.json sidecar or when");
+  console.error("                 refreshing stale metadata.");
+  console.error("  --verify-all   Re-fetch ALL inline DOIs via CrossRef, even ones with matching cached");
+  console.error("                 metadata. Use when the user says 'verify all citations' or 'controlla");
+  console.error("                 tutte le citazioni', or after errata / retractions were issued.");
+  console.error("                 Bare [N] markers without DOIs still resolve from the sidecar cache if");
+  console.error("                 available; the LLM pipeline fills those via the citation_search path.");
   process.exit(2);
 }
 
@@ -118,6 +123,7 @@ async function main() {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--no-cache") opts.noCache = true;
+    else if (a === "--verify-all") opts.verifyAll = true;
     else if (a === "-h" || a === "--help") usageAndExit();
     else if (a === "--version" || a === "-v") { /* handled below */ }
     else positional.push(a);
@@ -159,7 +165,11 @@ async function main() {
     console.log("Error:", result.error);
     process.exit(1);
   }
-  console.log(`Done! Word: ${result.docxPath} | References: ${result.bibliographyCount}${opts.noCache ? " | (cache bypassed)" : ""}`);
+  const flagSummary = [
+    opts.noCache ? "cache bypassed" : "",
+    opts.verifyAll ? "all citations re-fetched" : "",
+  ].filter(Boolean).join(", ");
+  console.log(`Done! Word: ${result.docxPath} | References: ${result.bibliographyCount}${flagSummary ? ` | (${flagSummary})` : ""}`);
 }
 
 main().catch((err) => {
