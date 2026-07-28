@@ -312,13 +312,13 @@ assert(lex.claimStrength.grades && Object.keys(lex.claimStrength.grades).length 
 
 // --- Malformed DOI marker handling (defensive regex) ---
 import { finalizeDoc } from "../src/pipeline.ts";
-import { mkdtempSync as mkdtempSyncMalformed, writeFileSync as writeFileSyncMalformed, rmSync as rmSyncMalformed } from "node:fs";
-import { tmpdir as tmpdirMalformed } from "node:os";
-import { join as joinMalformed } from "node:path";
+import { mkdtempSync as mkdtempSyncMal, writeFileSync as writeFileSyncMal, rmSync as rmSyncMal } from "node:fs";
+import { tmpdir as tmpdirMal } from "node:os";
+import { join as joinMal } from "node:path";
 
-const tmpDirMalformed = mkdtempSyncMalformed(joinMalformed(tmpdirMalformed(), "papertest-"));
-const malformedFile = joinMalformed(tmpDirMalformed, "malformed.md");
-writeFileSyncMalformed(malformedFile, "Some text [3](doi:10.1016/j.devcel.2015.03.001; and more text.", "utf-8");
+const tmpDirMalformed = mkdtempSyncMal(joinMal(tmpdirMal(), "papertest-"));
+const malformedFile = joinMal(tmpDirMalformed, "malformed.md");
+writeFileSyncMal(malformedFile, "Some text [3](doi:10.1016/j.devcel.2015.03.001; and more text.", "utf-8");
 const r1 = finalizeDoc(malformedFile);
 assert(r1.bibliographyCount === 1, `Malformed DOI: caught by defensive regex (got ${r1.bibliographyCount})`);
-rmSyncMalformed(tmpDirMalformed, { recursive: true });
+rmSyncMal(tmpDirMalformed, { recursive: true });

@@ -127,11 +127,27 @@ export default function (pi: ExtensionAPI) {
     description: "Generate new paper text from a description, then rewrite + cite + Word. Usage: /paper-write <what to write>",
     handler: async (args, ctx) => {
       const description = args.trim().replace(/^["']|["']$/g, "");
-      if (!description) {
-        ctx.ui.notify("Usage: /paper-write <description of what to write>", "warning");
-        return;
+      // Parse --output <path> flag
+      const args2 = args.trim().replace(/^["']|["']$/g, "");
+      let outputPath: string | undefined;
+      const outputMatch = args2.match(/--output\s+["']?([^"'\s]+)["']?/);
+      if (outputMatch) {
+        outputPath = outputMatch[1];
+        // Strip the --output flag from the description
+        const desc = args2.replace(/--output\s+["']?[^"'\s]+["']?/g, "").trim();
+        if (!desc) {
+          ctx.ui.notify("Usage: /paper-write <description> [--output <path>]", "warning");
+          return;
+        }
+        await pipelineWrite(desc, pi, { outputPath });
+      } else {
+        const desc = args2.replace(/^["']|["']$/g, "").trim();
+        if (!desc) {
+          ctx.ui.notify("Usage: /paper-write <description> [--output <path>]", "warning");
+          return;
+        }
+        await pipelineWrite(desc, pi);
       }
-      await pipelineWrite(description, pi);
     },
   });
 
