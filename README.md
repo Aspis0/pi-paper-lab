@@ -106,6 +106,18 @@ After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install 
 - Windows: works (Git Bash)
 - Linux: should work
 
+## Security
+
+`npm audit` reports **1 known HIGH vulnerability** in the dependency tree:
+
+- `brace-expansion@≤5.0.7` (transitive via `@earendil-works/pi-coding-agent` → `minimatch`).
+  - GHSA-mh99-v99m-4gvg — DoS via unbounded brace expansion causing out-of-memory crash.
+  - Impact: requires a malicious input file passed to `minimatch` glob patterns. The extension does not call `minimatch` directly with user input; risk for normal use is low.
+  - Status: `npm overrides` cannot fully force-rewrite this transitive copy (known npm CLI bug for nested deps, npm/cli#9659). The fix will land automatically when `@earendil-works/pi-coding-agent` updates its `minimatch` dependency.
+  - `npm audit` is wired into the `prepack` script so any new HIGH vulnerability blocks the next publish.
+
+To audit locally: `npm run audit` (or `npm audit --audit-level=high`).
+
 ## License
 
 MIT
