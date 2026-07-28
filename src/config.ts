@@ -142,6 +142,8 @@ export async function paperLabConfigCommand(
     if (selected) {
       if (selected.startsWith("auto")) {
         delete config.domain;
+        saveConfig(config);
+        ctx.ui.notify(`✅ Domain set to: auto (detected from text)`, "info");
       } else {
         const match = domainChoices.find(c => selected.includes(c.key));
         if (match) {

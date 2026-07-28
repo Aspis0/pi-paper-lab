@@ -137,11 +137,11 @@ export default function (pi: ExtensionAPI) {
       // Parse --output <path> flag
       const args2 = args.trim().replace(/^["']|["']$/g, "");
       let outputPath: string | undefined;
-      const outputMatch = args2.match(/--output\s+["']?([^"'\s]+)["']?/);
+      const outputMatch = args2.match(/--output\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
       if (outputMatch) {
-        outputPath = outputMatch[1];
-        // Strip the --output flag from the description
-        const desc = args2.replace(/--output\s+["']?[^"'\s]+["']?/g, "").trim();
+        outputPath = outputMatch[1] ?? outputMatch[2] ?? outputMatch[3];
+        // Strip the --output flag and its path from the description
+        const desc = args2.replace(/--output\s+(?:"[^"]+"|'[^']+'|\S+)/g, "").trim();
         if (!desc) {
           ctx.ui.notify("Usage: /paper-write <description> [--output <path>]", "warning");
           return;

@@ -119,7 +119,7 @@ export interface ResolveResult {
     venue?: string;
     doi?: string;
     link?: string;
-    source: "scholar" | "crossref";
+    source: "scholar" | "crossref" | "exa";
     snippet?: string;
     citations?: number;
   }>;
@@ -172,7 +172,7 @@ export async function resolveCitation(
           year: year ?? "?",
           venue: undefined,
           link: r.url,
-          source: "scholar",
+          source: "exa",
           snippet: r.highlights?.[0],
         });
       }
@@ -182,7 +182,7 @@ export async function resolveCitation(
         title: `(Exa search failed: ${String(err).slice(0, 80)})`,
         authors: "",
         year: "?",
-        source: "scholar",
+        source: "exa",
       });
       return 0;
     }

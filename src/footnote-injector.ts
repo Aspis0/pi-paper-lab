@@ -52,8 +52,8 @@ export function findCitationMarkers(docxPath: string): Array<{ marker: string; l
         markers.push({ marker, locator: loc });
       }
     } catch {
-      // [N] not found — stop searching higher numbers
-      break;
+      // [N] not found — skip this number, continue searching
+      continue;
     }
   }
   return markers;

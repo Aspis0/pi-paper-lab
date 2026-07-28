@@ -36,7 +36,7 @@ export async function detectWithCopyleaks(
     const tokenRes = await fetch("https://id.copyleaks.com/v3/account/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: process.env.COPYLEAKS_EMAIL, apiKey }),
+      body: JSON.stringify({ email, apiKey }),
       signal: opts?.signal,
     });
     if (!tokenRes.ok) return null;

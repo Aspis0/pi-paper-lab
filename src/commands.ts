@@ -37,12 +37,13 @@ export const scanCommand = (deps: CommandDeps) => async (
   const target = args.trim() || ctx.cwd;
   let text = "";
   try {
-    if (target === ctx.cwd || !target.includes(".")) {
-      text = readFileSync(target, "utf8");
-    } else {
-      const fs = await import("node:fs/promises");
-      text = await fs.readFile(target, "utf8");
+    const fs = await import("node:fs/promises");
+    const stat = await fs.stat(target);
+    if (stat.isDirectory()) {
+      ctx.ui.notify(`Usage: /bio-scan <file-path> (not a directory)`, "warning");
+      return;
     }
+    text = await fs.readFile(target, "utf8");
   } catch (err) {
     ctx.ui.notify(`Could not read ${target}: ${String(err)}`, "error");
     return;
