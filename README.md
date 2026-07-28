@@ -1,48 +1,59 @@
 # pi-paper-lab
 
-A [pi](https://github.com/earendil-works/pi-coding-agent) extension that writes scientific papers in any biology field. Anti-AI rewrite, automatic Vancouver citations, `.docx` output.
+A [pi](https://github.com/earendil-works/pi-coding-agent) extension for writing scientific papers in any biology field. Anti-AI rewrite, Vancouver citations, `.docx` output.
+
+Reads and writes `.docx` via the [bun-docx](https://www.npmjs.com/package/bun-docx) CLI (thanks to the bun-docx project for the file conversion backend).
 
 ## Install
 
-**1. Install the docx CLI** (macOS / Linux)
+Requires [pi](https://github.com/earendil-works/pi-coding-agent) ≥ 0.6.
+
+**macOS / Linux / WSL:**
+
+```bash
+pi install github:Aspis0/pi-paper-lab
+```
+
+This clones the repo to `~/.pi/agent/extensions/pi-paper-lab/` and loads it on next pi start. The bun-docx CLI is a peer dependency:
 
 ```bash
 npm install -g bun-docx
 ```
 
-**Windows (Git Bash):** drop `docx.exe` into `~/.local/bin/`.
+**Windows (Git Bash):**
 
-**2. Get a Serper API key** at https://serper.dev (2,500 free searches/month).
+Download `docx.exe` from the [bun-docx releases](https://github.com/SFETNI/bun-docx/releases) and put it in `~/.local/bin/` so the extension can find it.
 
-**3. Install the extension**
+**Get a Serper API key** at https://serper.dev (2,500 free searches/month). Optional: get an [Exa](https://dashboard.exa.ai/api-keys) key for the alternative backend.
 
-```bash
-cd ~/.pi/agent/extensions
-git clone https://github.com/Aspis0/pi-paper-lab.git
+**Configure** inside pi:
+
+```
+/paper-lab
 ```
 
-**4. Configure**. Inside pi, run `/paper-lab`.
+Interactive menu for API keys, domain selection, citation backend.
 
 ## Use
 
 ```
 /paper-write "intro on micro-CT imaging in Drosophila cancer cachexia"
-/paper-rewrite MyDraft.md
-/paper-cite MyDraft.docx
+/paper-rewrite MyDraft.md "tighten the methods section"
+/paper-cite MyDraft.docx "prefer Fearon 2011, Holland 2022"
 ```
 
-`/paper-write` and `/paper-rewrite` start with a study phase: the LLM searches the literature (Serper Scholar, `web_search`) and saves findings to `study-notes.md` next to the draft. The draft then cites the real papers it found.
+`/paper-write` and `/paper-rewrite` start with a study phase: the LLM searches the literature and saves findings to `study-notes.md` next to the draft. The draft then cites the real papers it found.
 
-`/paper-cite` skips the study phase. It operates on existing text and finds citations per-claim.
+`/paper-cite` skips the study phase. It finds citations for existing claims.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/paper-write <description>` | Generate text from a description |
+| `/paper-write <description> [--output path]` | Generate text from a description |
 | `/paper-rewrite <file> [instructions]` | Rewrite anti-AI + add citations |
-| `/paper-cite <file>` | Add citations to existing draft |
-| `/paper-lab` | API keys + domain selection |
+| `/paper-cite <file> [instructions]` | Add citations to existing draft |
+| `/paper-lab` | API keys + domain + citation backend |
 
 ## Domains
 
@@ -59,6 +70,15 @@ species:
   first_mention: "Danio rerio"
 ```
 
+## Citation backends
+
+`/paper-lab` → option 6 picks:
+
+- `serper` (default): Google Scholar via Serper.dev
+- `exa`: Exa.ai publications index, 350M+ papers
+- `both`: parallel query, merge + dedupe
+- `auto`: try Exa first, fall back to Serper on failure or empty results
+
 ## How it works
 
 ```
@@ -70,7 +90,13 @@ species:
   → finalizeDoc → .docx with Vancouver references
 ```
 
-Two visible pipelines: `/paper-write` and `/paper-rewrite` (full pipeline including rewrite + AI check) and `/paper-cite` (citations only). `/paper-lab` configures API keys and selects the active domain.
+## Acknowledgements
+
+- [bun-docx](https://github.com/SFETNI/bun-docx). Markdown ↔ .docx conversion CLI used for file I/O.
+- [pi](https://github.com/earendil-works/pi-coding-agent). The agent runtime this extends.
+- [Serper.dev](https://serper.dev). Google Scholar API.
+- [Exa](https://exa.ai). Neural academic search.
+- [CrossRef](https://www.crossref.org/). DOI metadata for Vancouver citation formatting.
 
 ## Platform
 
