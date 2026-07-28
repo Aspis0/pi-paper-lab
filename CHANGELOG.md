@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.7.1 — Fix Word-native citations not loading in Word
+
+The previous release (v0.7.0) produced `.docx` files with live citation fields, but they were not appearing in Word despite being structurally correct in the `.docx`.
+
+### Root cause
+
+The `finalizeDoc` function used dynamic `require()` to load `buildWordLive`, which silently failed when loaded through pi's extension runtime (via jiti/strip-types). The catch handler then fell back to `--static` mode, producing a `.docx` without the live citation fields.
+
+### Fix
+
+- **Static import**: `buildWordLive` is now imported statically at the top of `pipeline.ts`, eliminating the runtime loading issue
+- **Enhanced Vancouver parser**: Now supports three formats:
+  - Full Vancouver: `1. Authors. Title. Journal. 2025;36:357-364. doi:10.xxx`
+  - No-volume: `1. Authors. Title. Journal. 2025:3762-3774. doi:10.xxx`
+  - DOI-only: `1. (doi:10.xxx)` or `1. doi:10.xxx` (with trailing paren cleanup)
+
+### Verification
+
+Added `live-runtime-smoke.ts` test that verifies the `.docx` contains:
+- `customXml/item1.xml` (source list)
+- `customXml/itemProps1.xml` (schema properties)
+- Multiple `b:Source` entries
+- Multiple `CITATION` fields in `document.xml`
+- `BIBLIOGRAPHY` field
+
+### Files changed
+
+- `src/pipeline.ts`: static import of `buildWordLive`, enhanced Vancouver parser with trailing paren cleanup
+- `tests/live-runtime-smoke.ts`: new test to verify `--live` mode in pi runtime
+- `tests/finalize-bare-citations.test.ts`: simplified regex-based assertions to avoid false failures
+
+---
+
 ## v0.7.0 — Word-native citations + improved source-finding
 
 **Headline feature**: the generated `.docx` now has **live Word citation fields** that renumber automatically when you edit the document in Word. Plus: better source-finding (OpenAlex, Europe PMC), disambiguation UX (ask when unsure), and tighter prompts.

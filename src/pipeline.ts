@@ -29,6 +29,7 @@ import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER,
 import { classifyFindings, formatClarifyPrompt, serialiseClarifications, type ClarifyItem } from "./clarify.ts";
 import { lookupDoi, formatVancouver, type CrossRefWork } from "./crossref.ts";
 import { detectAI, detectRewriteLoop, formatDetectionReport, type AIDetectionResult } from "./ai-detector.ts";
+import { buildWordLive, type WordLiveBuilderSource } from "./word-live-builder.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -941,43 +942,49 @@ export function finalizeDoc(
   // static .docx rather than fail the whole finalize.
   if (opts?.live) {
     try {
-      // MED-4 note (M4 audit): we use a synchronous dynamic require via
-      // createRequire. The `.ts` extension works at runtime under tsx/jiti
-      // (the current build). If/when the build is compiled to `.js`, this
-      // would need a try/catch fallback on the `.js` path. The sync shape
-      // is deliberate: buildWordLive itself is synchronous, and wrapping
-      // it in a fire-and-forget async IIFE would return liveApplied:true
-      // before the build actually completes. Keeping sync is less risky.
-      const { createRequire } = require("node:module") as typeof import("node:module");
-      const req = createRequire(import.meta.url);
-      const { buildWordLive } = req("./word-live-builder.js") as typeof import("./word-live-builder.ts");
-      const liveSources: Array<{ id: number; tag: string; title: string; year?: string; journal?: string; doi?: string; url?: string; authors?: { family: string; given?: string }[]; volume?: string; issue?: string; pages?: string }> = [];
-      for (const [num, entry] of citations.entries()) {
-        // Parse a Vancouver-format entry back into source fields. The
-        // format is:
-        //   "<num>. <authors>. <title>. <journal>. <year>;vol(issue):pages. doi:<doi>"
-        // where vol/issue/pages are all OPTIONAL.
-        // CRIT-3 fix (M4 audit): volume MUST be digits (`\d+`), issue is
-        // `(digits)` after the volume. The previous `\S+?` was too loose
-        // and caused `;15(4):1-10` to be parsed as vol="15(4)", issue="4", pages="1-10".
-        // CRIT-4 fix (M4 audit): if the Vancouver entry is a placeholder
-        // (no DOI, e.g. "<num>. [Citation metadata unavailable...]"), we
-        // still emit a source so Word's bibliography doesn't have a hole
-        // at that position. HIGH-5 fix (M4 audit): parseInt is guarded
-        // against NaN. MED-3 fix (M4 audit): issue is captured separately.
+      // v0.7.1 fix: buildWordLive is imported statically at the top of this
+      // file. The previous version used a dynamic `require("./word-live-builder.js")`
+      // which silently failed when finalizeDoc was loaded through pi's extension
+      // runtime (jiti/strip-types) — the catch path produced a static .docx
+      // without the CustomXML parts, so Word never saw live citations.
+      //
+      // Sidecar DOIs may retain a trailing `)` from the marker form
+      // `[N](<doi:10.x/xxx>)` when the LLM wrote the Vancouver entry as
+      // "N. (doi:10.x/xxx)" or the DOI resolver returned a string with a
+      // trailing paren. Strip it ONLY here, on the extracted DOI, because
+      // `cleanDoi` (public) deliberately preserves `)` as valid DOI content.
+      const stripTrailingParen = (s: string | undefined): string | undefined =>
+        s ? s.replace(/\)$/, "") : s;
+
+      const liveSources: WordLiveBuilderSource[] = [];
+      for (const [, entry] of citations.entries()) {
+        // Parse a Vancouver-format entry back into source fields.
+        // We support three formats:
+        //   A) Full Vancouver: "1. Authors. Title. Journal. 2025;36:357-364. doi:..."
+        //   B) No-volume:      "1. Authors. Title. Journal/Proc. 2025:3762-3774. doi:..."
+        //   C) DOI-only:       "1. (doi:...)" or "1. doi:..." or "1. [Citation...]"
         const full = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4})(?:;(\d+)(?:\((\d+)\))?(?::(.+?))?)?\.\s+doi:(\S+?)\.?$/);
-        const placeholder = entry.match(/^(\d+)\.\s+\[(.+)\]$/);
+        const noVol = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4}):(\S+?)\.\s+doi:(\S+?)\.?$/);
+        const doiOnly = entry.match(/^(\d+)\.\s+\(?doi:(\S+?)\.?\)?$/);
         if (full) {
           const [, n, authors, title, journal, year, vol, issue, pages, doi] = full;
           const id = parseInt(n!, 10);
           if (!Number.isFinite(id) || id < 1) continue;
           const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
-          liveSources.push({ id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi, authors: authorList, volume: vol, issue, pages });
-        } else if (placeholder) {
-          const id = parseInt(placeholder[1]!, 10);
+          liveSources.push({ id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi: stripTrailingParen(doi), authors: authorList, volume: vol, issue, pages });
+        } else if (noVol) {
+          const [, n, authors, title, journal, year, pages, doi] = noVol;
+          const id = parseInt(n!, 10);
           if (!Number.isFinite(id) || id < 1) continue;
-          liveSources.push({ id, tag: `Ref${id}`, title: `[${placeholder[2]}]` });
+          const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
+          liveSources.push({ id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi: stripTrailingParen(doi), authors: authorList, pages });
+        } else if (doiOnly) {
+          const id = parseInt(doiOnly[1]!, 10);
+          if (!Number.isFinite(id) || id < 1) continue;
+          liveSources.push({ id, tag: `Ref${id}`, title: `Reference ${id}`, doi: stripTrailingParen(doiOnly[2]) });
         }
+        // If none of the regex match we skip silently: the static bibliography
+        // still has the entry, the live one will have a gap — acceptable.
       }
       buildWordLive(docxPath, liveSources, { style: "ieee" });
     } catch (err: any) {
