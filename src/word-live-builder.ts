@@ -105,21 +105,51 @@ export function buildSourcesXml(sources: WordLiveBuilderSource[]): string {
     const authorBlock = authors
       ? `<b:Author><b:Author><b:NameList>${authors}</b:NameList></b:Author></b:Author>`
       : "";
-    return `<b:Source><b:Tag>${tag}</b:Tag><b:SourceType>${sourceType}</b:SourceType><b:Guid>{${s.id}-0000-0000-0000-000000000000}</b:Guid>${authorBlock}<b:Title>${title}</b:Title>${journal}<b:Year>${year}</b:Year>${volume}${issue}${pages}${doi}${url}<b:RefOrder>${s.id}</b:RefOrder></b:Source>`;
+    // HIGH-1 fix (M4 audit): the GUID is now derived from the source
+    // content (DOI or title) so two papers with the same id do not
+    // collide in Word's Source Manager. Previously the GUID was
+    // `{1-0000-...}` which was the same for every paper that used
+    // id=1. Stable across re-runs of the same paper; differs across papers.
+    const guidSource = s.doi ?? s.title ?? id;
+    return `<b:Source><b:Tag>${tag}</b:Tag><b:SourceType>${sourceType}</b:SourceType><b:Guid>${stableGuid(guidSource)}</b:Guid>${authorBlock}<b:Title>${title}</b:Title>${journal}<b:Year>${year}</b:Year>${volume}${issue}${pages}${doi}${url}<b:RefOrder>${s.id}</b:RefOrder></b:Source>`;
   }).join("");
   return sourceNodes;
 }
 
 /**
  * Escape XML special characters. Exported for testing.
+ * HIGH-3 fix (M4 audit): also strip XML-illegal control characters
+ * (anything outside #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
+ * | [#x10000-#x10FFFF]). Real input from CrossRef is clean but
+ * downstream consumers (or a misbehaving LLM) can introduce \x00 etc.
  */
 export function escapeXml(s: string): string {
   return s
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/**
+ * Derive a stable Word GUID from a string (typically DOI or title).
+ * HIGH-1 fix (M4 audit): the previous `{id}-0000-...` placeholder
+ * caused cross-document collisions in Word's Source Manager. We now
+ * hash the content so two papers with the same source id do not
+ * collide. The hash is deterministic, so re-runs of the same paper
+ * produce the same GUID (Word's "Update from Master List" still
+ * works). The 8-hex-prefix is fine for a Word GUID; the rest is
+ * padded zeros.
+ */
+export function stableGuid(input: string): string {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
+  }
+  const hex = Math.abs(hash).toString(16).toUpperCase().padStart(8, "0").slice(0, 8);
+  return `{${hex}-0000-0000-0000-000000000000}`;
 }
 
 /**
@@ -184,18 +214,24 @@ function buildBibliographySdt(visibleText: string = "(Update Field to render)"):
  * (just before `</w:body>`). Returns the modified document.xml.
  */
 export function rewriteDocumentXml(docXml: string): string {
-  // Replace <w:r><w:rPr>...<w:vertAlign w:val="superscript"/>...</w:rPr>
-  // <w:t>[N]</w:t></w:r> with a CITATION SDT. The bun-docx output uses
-  // <sup>...</sup> which becomes a <w:r>...<w:vertAlign>...</w:vertAlign>
-  // <w:t>[N]</w:t></w:r> in OOXML.
+  // CRIT-1 fix (M4 audit): the rPr block containing <w:vertAlign
+  // w:val="superscript"/> is now MANDATORY (the previous `?` made
+  // the whole rPr block optional, which let the regex match plain
+  // <w:r><w:t>[N]</w:t></w:r> runs and turn them into CITATION SDTs).
+  // We still allow other elements inside <w:rPr> (e.g. <w:rStyle/>,
+  // <w:lang/>).
   let out = docXml;
-  // Match a run that has the [N] in a <w:t>, with optional <w:vertAlign
-  // superscript> somewhere in the same <w:rPr>.
-  const supRunRe = /<w:r\b[^>]*>(?:<w:rPr>(?:[^<]|<(?!w:t\b)[^<]*)*<w:vertAlign w:val="superscript"\/>(?:[^<]|<(?!w:t\b)[^<]*)*<\/w:rPr>)?\s*<w:t[^>]*>\[(\d+)\]<\/w:t>\s*<\/w:r>/g;
+  const supRunRe = /<w:r\b[^>]*><w:rPr>(?:[^<]|<(?!w:t\b)[^<]*)*<w:vertAlign w:val="superscript"\/>(?:[^<]|<(?!w:t\b)[^<]*)*<\/w:rPr>\s*<w:t[^>]*>\[(\d+)\]<\/w:t>\s*<\/w:r>/g;
   out = out.replace(supRunRe, (_m, n) => buildCitationSdt(parseInt(n, 10), `[${n}]`));
 
-  // Append the BIBLIOGRAPHY SDT just before </w:body>.
-  out = out.replace("</w:body>", buildBibliographySdt() + "</w:body>");
+  // CRIT-2 fix (M4 audit): only append the BIBLIOGRAPHY SDT if one
+  // is not already present. Without this guard, every call to
+  // rewriteDocumentXml would append another BIBLIOGRAPHY SDT, so
+  // running finalizeDoc({live: true}) twice would produce a
+  // document with TWO bibliography sections.
+  if (!out.includes("<w:bibliography/>")) {
+    out = out.replace("</w:body>", buildBibliographySdt() + "</w:body>");
+  }
   return out;
 }
 

@@ -13,6 +13,7 @@ import {
   patchDocumentRelsXml,
   rewriteDocumentXml,
   buildWordLive,
+  stableGuid,
   type WordLiveBuilderSource,
 } from "../src/word-live-builder.ts";
 import AdmZip from "adm-zip";
@@ -158,6 +159,53 @@ test("rewriteDocumentXml: leaves prose without [N] untouched", () => {
   const sdtCount = (after.match(/<w:sdt>/g) ?? []).length;
   assert.ok(sdtCount >= 1, `expected >= 1 BIBLIOGRAPHY SDT, got ${sdtCount}`);
   assert.ok(!has("CITATION", after), "no CITATION field expected when no [N] markers in prose");
+});
+
+test("rewriteDocumentXml: does NOT match plain <w:r><w:t>[N]</w:t></w:r> runs (CRIT-1 fix)", () => {
+  // Without <w:rPr>...<w:vertAlign w:val="superscript"/> the run is NOT
+  // a citation marker and must be left alone.
+  const before = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>[1]</w:t></w:r> plain text.</w:p></w:body></w:document>`;
+  const after = rewriteDocumentXml(before);
+  assert.ok(has("<w:t>[1]</w:t>", after), "plain <w:r><w:t>[1]</w:t></w:r> must be preserved");
+  assert.ok(!has("CITATION Ref1", after), "plain run must NOT be turned into a CITATION SDT");
+});
+
+test("rewriteDocumentXml: is idempotent on re-run (CRIT-2 fix)", () => {
+  const before = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>X<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>[1]</w:t></w:r></w:p></w:body></w:document>`;
+  const once = rewriteDocumentXml(before);
+  const twice = rewriteDocumentXml(once);
+  // The second call must not add another BIBLIOGRAPHY SDT.
+  const sdtCountOnce = (once.match(/<w:sdt>/g) ?? []).length;
+  const sdtCountTwice = (twice.match(/<w:sdt>/g) ?? []).length;
+  assert.equal(sdtCountTwice, sdtCountOnce, "BIBLIOGRAPHY SDT must not be appended on re-run");
+  // The bibliography field must appear exactly once.
+  const bibCount = (twice.match(/BIBLIOGRAPHY/g) ?? []).length;
+  assert.equal(bibCount, 1, "BIBLIOGRAPHY field must appear exactly once on re-run");
+});
+
+test("escapeXml: strips XML-illegal control characters (HIGH-3 fix)", () => {
+  assert.equal(escapeXml("a\x00b"), "ab", "null byte is stripped");
+  assert.equal(escapeXml("a\x0Cb"), "ab", "form-feed is stripped");
+  assert.equal(escapeXml("a\x01b"), "ab", "SOH is stripped");
+  // Tab, newline, carriage return are the only control chars allowed in XML.
+  assert.equal(escapeXml("a\tb\nc\rd"), "a\tb\nc\rd", "tab/newline/CR preserved");
+});
+
+test("stableGuid: deterministic on the same input", () => {
+  const a = stableGuid("10.1242/dmm.049298");
+  const b = stableGuid("10.1242/dmm.049298");
+  assert.equal(a, b, "same input must produce same GUID");
+});
+
+test("stableGuid: differs across papers (HIGH-1 fix)", () => {
+  const g1 = stableGuid("10.1242/dmm.049298");
+  const g2 = stableGuid("10.1016/j.devcel.2015.03.001");
+  assert.notEqual(g1, g2, "different content must produce different GUIDs");
+});
+
+test("stableGuid: conforms to the Word GUID format", () => {
+  const g = stableGuid("10.1242/dmm.049298");
+  assert.match(g, /^\{[0-9A-F]{8}-0000-0000-0000-000000000000\}$/);
 });
 
 function makeMinimalDocx(path: string): void {

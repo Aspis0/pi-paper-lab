@@ -931,32 +931,42 @@ export function finalizeDoc(
   // static .docx rather than fail the whole finalize.
   if (opts?.live) {
     try {
-      // Dynamic require (kept sync; the import is also async but we
-      // use the sync CommonJS-style require via createRequire so the
-      // call is compatible with the surrounding sync finalizeDoc).
+      // MED-4 note (M4 audit): we use a synchronous dynamic require via
+      // createRequire. The `.ts` extension works at runtime under tsx/jiti
+      // (the current build). If/when the build is compiled to `.js`, this
+      // would need a try/catch fallback on the `.js` path. The sync shape
+      // is deliberate: buildWordLive itself is synchronous, and wrapping
+      // it in a fire-and-forget async IIFE would return liveApplied:true
+      // before the build actually completes. Keeping sync is less risky.
       const { createRequire } = require("node:module") as typeof import("node:module");
       const req = createRequire(import.meta.url);
-      const { buildWordLive } = req("./word-live-builder.ts") as typeof import("./word-live-builder.ts");
+      const { buildWordLive } = req("./word-live-builder.js") as typeof import("./word-live-builder.ts");
       const liveSources: Array<{ id: number; tag: string; title: string; year?: string; journal?: string; doi?: string; url?: string; authors?: { family: string; given?: string }[]; volume?: string; issue?: string; pages?: string }> = [];
       for (const [num, entry] of citations.entries()) {
         // Parse a Vancouver-format entry back into source fields. The
-        // format is "<num>. <authors>. <title>. <journal>. <year><vol>... doi:<doi>".
-        // This is lossy; the live builder uses best-effort parsing.
-        const m = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d+)(?:;(\S+?))?(?::(\S+?))?\.\s+doi:(\S+?)\.?$/);
-        if (m) {
-          const [, n, authors, title, journal, year, vol, pages, doi] = m;
-          const authorList = authors.split(/,\s*/).map((family) => ({ family }));
-          liveSources.push({
-            id: parseInt(n),
-            tag: `Ref${n}`,
-            title,
-            year,
-            journal: journal.trim(),
-            doi,
-            authors: authorList,
-            volume: vol,
-            pages,
-          });
+        // format is:
+        //   "<num>. <authors>. <title>. <journal>. <year>;vol(issue):pages. doi:<doi>"
+        // where vol/issue/pages are all OPTIONAL.
+        // CRIT-3 fix (M4 audit): volume MUST be digits (`\d+`), issue is
+        // `(digits)` after the volume. The previous `\S+?` was too loose
+        // and caused `;15(4):1-10` to be parsed as vol="15(4)", issue="4", pages="1-10".
+        // CRIT-4 fix (M4 audit): if the Vancouver entry is a placeholder
+        // (no DOI, e.g. "<num>. [Citation metadata unavailable...]"), we
+        // still emit a source so Word's bibliography doesn't have a hole
+        // at that position. HIGH-5 fix (M4 audit): parseInt is guarded
+        // against NaN. MED-3 fix (M4 audit): issue is captured separately.
+        const full = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4})(?:;(\d+)(?:\((\d+)\))?(?::(.+?))?)?\.\s+doi:(\S+?)\.?$/);
+        const placeholder = entry.match(/^(\d+)\.\s+\[(.+)\]$/);
+        if (full) {
+          const [, n, authors, title, journal, year, vol, issue, pages, doi] = full;
+          const id = parseInt(n!, 10);
+          if (!Number.isFinite(id) || id < 1) continue;
+          const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
+          liveSources.push({ id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi, authors: authorList, volume: vol, issue, pages });
+        } else if (placeholder) {
+          const id = parseInt(placeholder[1]!, 10);
+          if (!Number.isFinite(id) || id < 1) continue;
+          liveSources.push({ id, tag: `Ref${id}`, title: `[${placeholder[2]}]` });
         }
       }
       buildWordLive(docxPath, liveSources, { style: "ieee" });
