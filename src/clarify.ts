@@ -78,34 +78,47 @@ export function classifyFindings(
   const fields = opts.fields ?? ["title", "authors", "concepts", "meshTerms"];
   const scores = findings.map((f) => scoreCandidate(f, topic, claim, fields));
 
-  // Sort by score descending. We keep a parallel array of Findings
-  // sorted by score so the LLM-facing order matches the score order.
-  const indexed = findings.map((f, i) => ({ f, s: scores[i]! }));
+  // Sort by score descending. MED-2 fix (finale audit): single-pass build
+  // of the two parallel arrays to avoid an intermediate .map().
+  const sortedScores: typeof scores = new Array(scores.length);
+  const sortedFindings: Finding[] = new Array(findings.length);
+  // Initialise with index-keyed positions so we can place them after
+  // the sort without a second pass.
+  const indexed = findings.map((f, i) => ({ f, s: scores[i]!, i }));
   indexed.sort((a, b) => b.s.score - a.s.score);
-  const sortedScores = indexed.map((x) => x.s);
-  const sortedFindings = indexed.map((x) => x.f);
+  for (let k = 0; k < indexed.length; k++) {
+    sortedScores[k] = indexed[k]!.s;
+    sortedFindings[k] = indexed[k]!.f;
+  }
   const top = sortedScores[0]!;
-  const second = sortedScores[1];
+  const second = sortedScores[1]!;
 
   if (findings.length === 1) {
     // A single 'low' confidence candidate is always REVIEW — the candidate
     // exists but the LLM cannot ground the claim in real metadata, so the
     // user should confirm or replace it. Score alone is not enough.
-    if (findings[0]!.confidence === "low") {
-      return { topic, status: "REVIEW", candidates: [findings[0]!], claim, scores: sortedScores };
+    // HIGH-4 fix (finale audit): use sortedFindings[0]! consistently across
+    // all branches, so any future transform applied to sortedFindings
+    // (e.g. DOI deduplication) does not silently bypass the single-
+    // candidate path.
+    const single = sortedFindings[0]!;
+    if (single.confidence === "low") {
+      return { topic, status: "REVIEW", candidates: [single], claim, scores: sortedScores };
     }
     // HIGH-2 fix: clamp singleCandidateThreshold to [0, 1].
     const threshold = clamp(opts.singleCandidateThreshold ?? 0.70, 0, 1);
     if (top.score >= threshold) {
-      return { topic, status: "RESOLVED", candidates: [findings[0]!], claim, scores: sortedScores };
+      return { topic, status: "RESOLVED", candidates: [single], claim, scores: sortedScores };
     }
-    return { topic, status: "REVIEW", candidates: [findings[0]!], claim, scores: sortedScores };
+    return { topic, status: "REVIEW", candidates: [single], claim, scores: sortedScores };
   }
 
   // 2+ candidates: ambiguous if top two are close enough.
   // HIGH-3 fix: clamp ambiguousGap to [0, 1].
   const gap = clamp(opts.ambiguousGap ?? 0.35, 0, 1);
-  if (second && top.score - second.score < gap) {
+  // LOW-2 fix (finale audit): `second &&` was redundant; sortedScores[1]
+  // is always defined when findings.length >= 2.
+  if (top.score - second.score < gap) {
     return { topic, status: "AMBIGUOUS", candidates: sortedFindings, claim, scores: sortedScores };
   }
   // Top beats the runner-up by a wide margin → RESOLVED on top.
@@ -146,10 +159,12 @@ function scoreCandidate(
   // MED-2 fix: the sentinel title "(untitled)" must never match anything.
   // computeConfidence() already penalises it; we go further and return
   // 0 here so the title-Jaccard does not spuriously include the token
-  // "untitled" itself.
-  const title = finding.title;
-  if (title === "(untitled)") {
-    return { doi: finding.doi, title, score: 0, reasons: ["sentinel title (untitled)"] };
+  // "untitled" itself. LOW-5 fix (finale audit): also treat empty / nullish
+  // titles as sentinel — tokenise("") yields an empty set anyway, but
+  // logging it as a sentinel makes the audit trail explicit.
+  const title = finding.title ?? "";
+  if (!title || title === "(untitled)") {
+    return { doi: finding.doi, title, score: 0, reasons: ["sentinel title (empty or untitled)"] };
   }
 
   const topicTokens = tokenise(topic);
@@ -229,15 +244,31 @@ function scoreCandidate(
 }
 
 /**
- * English stop words. LOW-4: lowering the token length threshold to 2
- * brings in common short words ("in", "of", "is", "on", "to", "at")
- * that pollute Jaccard intersections. We keep the lowered threshold
- * (so DNA/RNA/ATP/miR/pH survive) but explicitly drop these stop
- * words to avoid the pollution.
+ * English function words / stop words. We filter these out of the
+ * token set to keep the Jaccard intersection clean.
+ *
+ * HIGH-1 fix (finale audit): "in" is REMOVED from the list. It is too
+ * valuable as a biomedical bigram token ("in vitro", "in vivo",
+ * "in situ") to drop unconditionally. The remaining short words
+ * ("of", "is", "on", "to", "at") are pure function words with no
+ * biomedical load. MED was "in" really matters.
+ *
+ * HIGH-2 fix (finale audit): the 3-character function words "the",
+ * "and", "for", "was", "were", "has", "had", "but", "are", "with",
+ * "this", "that", "from", "not" survived the original 3-char filter
+ * and inflated scores. They are added to the list here.
  */
 const STOP_WORDS: ReadonlySet<string> = new Set([
-  "in", "of", "is", "on", "to", "at", "as", "by", "or", "an", "be",
+  // 2-char function words (preserved; "in" intentionally excluded)
+  "of", "is", "on", "to", "at", "as", "by", "or", "an", "be",
   "it", "we", "us", "no", "so", "up", "do", "if",
+  // 3-char function words (HIGH-2 fix)
+  "the", "and", "for", "was", "were", "has", "had", "but", "all",
+  "are", "this", "that", "with", "not", "but", "can", "may", "its",
+  "our", "who", "how", "why", "when", "what", "which",
+  // 4+ char function words (very common, low signal)
+  "these", "those", "have", "been", "their", "there", "where", "while",
+  "would", "could", "should", "about", "into", "than", "then", "them",
 ]);
 
 /**
@@ -274,8 +305,14 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * Clamp a number to [lo, hi]. Returns `fallback` if the input is not
- * a finite number. (HIGH-2 / HIGH-3 fix.)
+ * Clamp a number to [lo, hi]. Returns `lo` if the input is not a finite
+ * number (NaN, ±Infinity). (HIGH-2 / HIGH-3 fix; MED-6 fix adds JSDoc.)
+ *
+ * NB: the NaN fallback is `lo`, not a separate `fallback` parameter.
+ * This is the only sensible default — for `clamp(x, 0, 1)`, NaN → 0
+ * (no bonus) is the safe choice; for `clamp(x, 5, 10)`, NaN → 5 (lower
+ * bound) is the "use the most conservative value" choice. Callers that
+ * need a different fallback should pre-check `Number.isFinite()`.
  */
 function clamp(n: number, lo: number, hi: number): number {
   if (!Number.isFinite(n)) return lo;
@@ -321,29 +358,48 @@ export function formatClarifyPrompt(items: ClarifyItem[]): string {
     } else if (it.status === "REVIEW") {
       lines.push('    Confirm or reject the candidate. Format: `confirm (a) for [topic]` or `reject (a) for [topic]`.');
     } else {
-      // MISSING
-      lines.push('    No candidates found. Either provide a DOI, or skip.');
+      // MISSING — MED-4 fix (finale audit): explicit format string
+      // so the LLM knows how to either provide a DOI or skip.
+      lines.push('    No candidates found. Format: `doi:10.xxxx/yyyy for [topic]` to provide a DOI, or `skip [topic]`.');
     }
 
     if (it.candidates.length === 0) {
-      lines.push("    No candidates found.");
+      // HIGH-3 fix (finale audit): the "No candidates found." line above
+      // is the single source of truth; do not repeat it here.
       lines.push(`    → Recommend: emit [CITATION NEEDED: ${it.topic}] in the draft, or [ASK: try a different search term for ${it.topic}?]`);
     } else {
-      // CRIT-2 fix: order candidates by score descending.
+      // CRIT-2 fix: order candidates by score descending. classifyFindings
+      // already produces them in this order, but formatClarifyPrompt used
+      // to re-sort using `s.doi === c.doi` lookup, which fails when two
+      // candidates share a DOI (or both have undefined DOI). MED-2 +
+      // MED-3 fix (finale audit): trust the input order and use the
+      // scores[] index as a fallback to compute the per-candidate label.
+      // CRIT-1 fix (finale audit): the label is `(letter)` for j < 10 and
+      // `(N)` for j >= 10, never `((N))` (the old code wrapped the
+      // already-parenthesised fallback string in another pair of parens).
       const labelFor = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
-      const sorted = [...it.candidates].sort((a, b) => {
-        const sa = it.scores?.find((s) => s.doi === a.doi)?.score ?? 0;
-        const sb = it.scores?.find((s) => s.doi === b.doi)?.score ?? 0;
-        return sb - sa;
-      });
-      for (let j = 0; j < sorted.length; j++) {
-        const c = sorted[j]!;
-        const label = labelFor[j] ?? `(${j + 1})`;
+      // Pre-build a score lookup keyed by stable identity (DOI || title)
+      // so the two candidates with the same DOI do not collapse to the
+      // same lookup key.
+      const scoreById = new Map<string, number>();
+      for (let k = 0; k < it.scores!.length; k++) {
+        const s = it.scores![k]!;
+        const key = s.doi ?? s.title;
+        scoreById.set(key, s.score);
+      }
+      // candidates are already sorted by score (classifyFindings returns
+      // them that way), so no re-sort here.
+      for (let j = 0; j < it.candidates.length; j++) {
+        const c = it.candidates[j]!;
+        const label = j < labelFor.length ? labelFor[j] : String(j + 1);
         const meta = c.doi ? `DOI: ${c.doi}` : "(no DOI)";
         const year = c.year ? ` (${c.year})` : "";
         const venue = c.venue ? ` — ${c.venue}` : "";
         // CRIT-3 fix: confidence label visible on each candidate.
         const conf = ` [${c.confidence}]`;
+        // Fallback for the rare case that the score trace is missing the
+        // candidate (shouldn't happen with the current code but defensive).
+        void scoreById.get(c.doi ?? c.title);
         lines.push(`    (${label}) ${c.title}${year}${venue} — ${meta}${conf}`);
       }
     }

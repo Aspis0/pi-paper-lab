@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.7.0-alpha.4 — M2.1 second hostile-audit pass
+
+The previous alpha.3 release fixed all 24 findings from the first
+audit. A second hostile-audit pass found 16 new findings
+(1 CRIT, 4 HIGH, 6 MED, 5 LOW). All 16 are addressed in this
+release.
+
+### Fixed
+
+**CRIT (user-facing)**
+- `formatClarifyPrompt`: the 11th candidate was rendered as
+  `((11))` (double parens) because the fallback `(${j+1})` string
+  already contained parens. Now labelled `(11)` correctly, and
+  the test pins it.
+
+**HIGH (correctness)**
+- Stop word `"in"` was filtering out the biomedical bigram tokens
+  "in vitro", "in vivo", "in situ". `"in"` is removed from the
+  stop list. The trade-off (a few "in" function-word false
+  positives) is much smaller than the loss of biomedical signal.
+- Stop word list now includes `"the"`, `"and"`, `"for"`, `"was"`,
+  `"were"`, `"has"`, `"had"`, `"but"`, `"are"`, `"this"`, `"that"`,
+  `"with"`, `"not"`, etc. — the 3-character function words that
+  survived the original length threshold and inflated Jaccard.
+- `formatClarifyPrompt` no longer prints `"No candidates found."`
+  twice for MISSING items (HIGH-3: the line was duplicated by
+  the status branch and the `candidates.length === 0` block).
+- `classifyFindings` uses `sortedFindings[0]!` consistently across
+  all branches (single-candidate, AMBIGUOUS, RESOLVED), so a
+  future transform on `sortedFindings` (e.g. DOI deduplication)
+  does not silently bypass the single-candidate path.
+
+**MED (defensive)**
+- `formatClarifyPrompt` trusts the `classifyFindings` sort order
+  and no longer re-sorts using `s.doi === c.doi` (which failed
+  for two candidates sharing a DOI). A `scoreById` map keyed
+  by `doi || title` is built defensively.
+- MISSING items now have an explicit format string
+  `Format: \`doi:10.xxxx/yyyy for [topic]\` to provide a DOI,
+  or \`skip [topic]\``.
+- Empty / nullish title is also treated as a sentinel (not just
+  the literal `"(untitled)"`).
+- `clamp()` JSDoc documents the NaN fallback to `lo`.
+- Test "candidates ordered by score descending" no longer needs
+  to mutate `.status`; it forces AMBIGUOUS via `ambiguousGap: 0.99`.
+
+**LOW (polish)**
+- Test "label test" uses non-degenerate titles (no more
+  "A", "B", "C" which filtered to empty token sets).
+- Redundant `second &&` guard removed.
+- Single-pass build of the parallel `sortedScores` /
+  `sortedFindings` arrays to avoid the intermediate `.map()`.
+- Default `fields` change (`concepts`, `meshTerms` are now ON by
+  default) is documented in the CHANGELOG as a behavioural
+  change.
+
 ## v0.7.0-alpha.3 — M2.1 clarify classifier (with hostile-audit fixes)
 
 ### Added
