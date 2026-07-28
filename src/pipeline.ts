@@ -33,6 +33,35 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
+// === Shell command the LLM runs to call finalizeDoc() ===
+//
+// History: this used to embed `node --experimental-strip-types -e "import('.../pipeline.ts')..."`,
+// which fails on Windows + node_modules-installed extensions because:
+//   1. ESM `import()` rejects `C:/...` absolute paths (needs file:// URL).
+//   2. Node refuses to type-strip `.ts` files inside `node_modules/`.
+// The dedicated CLI in bin/finalize.mjs uses jiti to bypass both.
+//
+// We emit a self-discovering command that prefers the global binary (npm i
+// creates it on PATH) and falls back to the locally-installed package's
+// bin/finalize.mjs (always present after `pi install npm:pi-paper-lab`).
+function finalizeCommand(targetPath: string): string {
+  const target = JSON.stringify(targetPath); // safe quoting for spaces/special chars
+  // Single shell pipeline that works on bash, Git Bash, and PowerShell-via-Cmd:
+  //   1. Try `command -v paper-lab-finalize` first (PATH lookup).
+  //   2. Else fall back to the well-known install location under .pi/agent.
+  //   3. Else fall back to npx (will fetch from npm registry if absent).
+  return [
+    `if command -v paper-lab-finalize >/dev/null 2>&1; then`,
+    `  paper-lab-finalize ${target}`,
+    `elif [ -f "$HOME/.pi/agent/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ]; then`,
+    `  node "$HOME/.pi/agent/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ${target}`,
+    `else`,
+    `  npx -y paper-lab-finalize ${target}`,
+    `fi`,
+  ].join("\n   ");
+}
+
+
 // When re-reading a .docx that was already processed:
 // 1. Parse the References section to extract DOIs per [N]
 // 2. Replace bare [N] / <sup>[N]</sup> in text with [N](doi:...)
@@ -253,8 +282,9 @@ export async function pipelineWrite(
     `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets (even for simple DOIs without special chars). Update ${outPath.replace(/\\/g, "/")}.`,
     `   CRITICAL: Each [N](<doi:...>) marker must be well-formed. Test your markers: they should be exactly "[1](<doi:10.1016/j.devcel.2015.03.001>)" with no missing parens, semicolons, or extra text.`,
     `   For each citation, call verify_citation(claim_sentence, doi) to confirm the paper actually supports the claim. If verification fails, find a different paper.`,
-    `STEP 4 — FINALIZE: Run this bash command:`,
-    `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${outPath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
+    `STEP 4 — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
+    `   ${finalizeCommand(outPath.replace(/\\/g, "/"))}`,
+    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry.`,
     `STEP 5 — REPORT: Tell the user: number of papers studied, path to study-notes.md, path to .docx. Do NOT read the .docx (binary).`,
   ].join("\n");
 
@@ -263,8 +293,6 @@ export async function pipelineWrite(
 
 // === Build the LLM cite-mark prompt ===
 function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean, userInstructions?: string): string {
-  const finalizeCmd = `node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${filePath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`;
-
   const userBlock = userInstructions
     ? `USER INSTRUCTIONS (follow these):\n${userInstructions}\n\n`
     : "";
@@ -297,8 +325,9 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
     rewriteBlock,
     studyBlock,
     `STEP ${startStep} — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch parallel). Assign [N](<doi:10.xxxx>) sequentially — ALWAYS use angle brackets around the doi, even for simple DOIs. Write the resolved file to ${filePath}.`,
-    `STEP ${startStep + 1} — FINALIZE: Run this bash command (it does bibliography + superscript + .docx automatically):`,
-    `   ${finalizeCmd}`,
+    `STEP ${startStep + 1} — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
+    `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}`,
+    `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry.`,
     `STEP ${startStep + 2} — REPORT: Tell the user the .docx path. Do NOT read the .docx (binary).`,
     ``,
     `Do ALL steps in ONE turn. Do not stop between steps.`,

@@ -1,12 +1,17 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
+  "bin": {
+    "paper-lab-finalize": "./bin/finalize.mjs",
+    "paper-lab-word": "./bin/generate-word.mjs"
+  },
   "files": [
     "extensions",
     "src",
+    "bin",
     "data",
     "README.md",
     "PLAN-AGNOSTIC.md",
@@ -15,7 +20,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/anti-ai-lexicon.test.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "audit": "npm audit --audit-level=high",
     "prepack": "npm run typecheck && npm test && npm run audit"
   },
@@ -50,8 +55,9 @@
     "node": ">=22.7"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "jiti": "^2.7.0",
     "js-yaml": "^4.1.0",
     "typebox": "^1.0.0"
   },
