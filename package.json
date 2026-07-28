@@ -1,6 +1,6 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.6.6",
+  "version": "0.7.0-alpha.1",
   "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
@@ -12,13 +12,15 @@
   "files": [
     "extensions",
     "src",
+    "src/source-finders",
     "bin",
     "data",
     "README.md",
     "CHANGELOG.md",
     "PLAN-AGNOSTIC.md",
     "PLAN-STUDY-PHASE.md",
-    "PLAN-EXA-BACKEND.md"
+    "PLAN-EXA-BACKEND.md",
+    "PLAN-v0.7-word-citations.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

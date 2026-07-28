@@ -45,6 +45,23 @@ test("reconstructAbstract: tolerates non-array values gracefully", () => {
   assert.equal(reconstructAbstract(inverted), "Cancer");
 });
 
+test("reconstructAbstract: ignores negative positions (out-of-range)", () => {
+  const inverted = { "a": [-1, 1] as number[], "b": [0] as number[] };
+  // pos -1 dropped → ["b", "a"]; pos 0 = "b", pos 1 = "a"
+  assert.equal(reconstructAbstract(inverted), "b a");
+});
+
+test("reconstructAbstract: ignores non-integer positions", () => {
+  const inverted = { "a": [1.5] as any, "b": [0] as number[] };
+  assert.equal(reconstructAbstract(inverted), "b");
+});
+
+test("reconstructAbstract: concatenates on collision (rare but defensive)", () => {
+  const inverted = { "a": [0] as number[], "b": [0] as number[] };
+  // Both words claim position 0 → concatenated rather than overwritten.
+  assert.equal(reconstructAbstract(inverted), "a b");
+});
+
 test("searchOpenAlex: happy path returns normalised Findings", async () => {
   await withMockFetch(async (input: any) => {
     const url = String(input);
@@ -111,7 +128,7 @@ test("searchOpenAlex: happy path returns normalised Findings", async () => {
     assert.equal(first.authors[0]!.family, "Liu");
     assert.equal(first.authors[0]!.given, "Ying");
     assert.equal(first.authors[0]!.orcid, "https://orcid.org/0000-0001-2345-6789");
-    assert.equal(first.pages, "dmm049298-dmm049298");
+    assert.equal(first.pages, "dmm049298");
 
     const second = findings[1]!;
     assert.equal(second.doi, undefined, "DOI absent when null in source");
@@ -161,5 +178,103 @@ test("searchOpenAlex: takes default num=5 when not specified", async () => {
   }, async () => {
     await searchOpenAlex("test");
     assert.ok(seenUrl.includes("per_page=5"), "default num=5");
+  });
+});
+
+test("searchOpenAlex: authorships with author:null are dropped (no `?` placeholder)", async () => {
+  await withMockFetch(async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      results: [
+        {
+          id: "https://openalex.org/W999",
+          doi: null,
+          title: "Institutional paper",
+          authorships: [
+            { author: null }, // institutional authorship, no person
+            { author: { display_name: "Doe, Jane" } },
+          ],
+        },
+      ],
+    }),
+  } as any), async () => {
+    const findings = await searchOpenAlex("test");
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0]!.authors.length, 1, "institutional entry dropped");
+    assert.equal(findings[0]!.authors[0]!.family, "Doe");
+  });
+});
+
+test("searchOpenAlex: confidence 'low' when no abstract + no DOI + sentinel title", async () => {
+  await withMockFetch(async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      results: [
+        {
+          id: "https://openalex.org/W111",
+          doi: null,
+          title: null, // → becomes "(untitled)" sentinel
+          authorships: [],
+        },
+      ],
+    }),
+  } as any), async () => {
+    const findings = await searchOpenAlex("test");
+    assert.equal(findings[0]!.confidence, "low", "no real title + no DOI + no abstract → low");
+  });
+});
+
+test("searchOpenAlex: confidence 'high' requires abstract + DOI + real title", async () => {
+  await withMockFetch(async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      results: [
+        {
+          id: "https://openalex.org/W222",
+          doi: "https://doi.org/10.1/x",
+          title: "Real Title",
+          authorships: [{ author: { display_name: "Doe, J" } }],
+          abstract_inverted_index: { "Hi": [0] },
+        },
+        {
+          id: "https://openalex.org/W333",
+          doi: "https://doi.org/10.1/y",
+          title: "Real Title Without Abstract",
+          authorships: [],
+        },
+      ],
+    }),
+  } as any), async () => {
+    const findings = await searchOpenAlex("test");
+    assert.equal(findings[0]!.confidence, "high");
+    assert.equal(findings[1]!.confidence, "medium", "no abstract → medium");
+  });
+});
+
+test("searchOpenAlex: pages is a range when first_page != last_page", async () => {
+  await withMockFetch(async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      results: [
+        {
+          id: "https://openalex.org/W444",
+          doi: null,
+          title: "X",
+          authorships: [],
+          biblio: { first_page: "100", last_page: "120" },
+        },
+      ],
+    }),
+  } as any), async () => {
+    const findings = await searchOpenAlex("test");
+    assert.equal(findings[0]!.pages, "100-120");
   });
 });

@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.7.0-alpha.1 — M1.1 OpenAlex source-finder (third substep of the v0.7 Word-native citations plan)
+
+### Added
+
+- **`src/source-finders/openalex.ts`** — new M1 source-finder backend.
+  `searchOpenAlex(query, { num, signal })` calls `api.openalex.org/works`
+  with the polite `mailto` pool, reconstructs plaintext abstracts from the
+  `abstract_inverted_index` (copyright-safe format), and normalises the
+  result into the new shared `Finding` type. `reconstructAbstract()` is
+  exported and unit-tested (now robust against negative, non-integer, and
+  colliding positions).
+- **`src/source-finders/confidence.ts`** — centralised `computeConfidence()`
+  helper. All M1 backends use the same rule set: `high` requires real
+  title + DOI + abstract; `medium` allows any one of those to be missing
+  as long as some content is present; `low` is the fallback. Sentinel
+  title `(untitled)` is explicitly excluded from the `high` set.
+- **`Finding` interface** (in `src/source-finders/openalex.ts`) — the
+  cross-backend contract for M1: `doi`, `title`, `authors`, `year`,
+  `venue`/`volume`/`issue`/`pages`, `abstract`, `meshTerms` (Europe PMC),
+  `concepts` (OpenAlex), `tldr` (S2), `citedByCount`, `isOpenAccess`,
+  `oaUrl`, `source`, `confidence`, plus backend-specific identifiers
+  (`openAlexId`, `pmid`, `pmcid`).
+- **`tests/openalex.test.ts`** — 12 offline tests (mocked `fetch`): happy
+  path, DOI prefix stripping, concept filtering, author parsing + ORCID,
+  num cap at 50, API errors, default num, sentinel-title handling,
+  `author:null` dropping, confidence scoring, pages range, abstract
+  reconstruction edge cases.
+- **`tests/confidence.test.ts`** — 8 unit tests covering the full
+  `high`/`medium`/`low` matrix.
+
+### Notes
+
+- This is an alpha build ahead of the v0.7.0 release. The next milestone
+  (M1.2) adds the Europe PMC source-finder. M4 (the Word-native citation
+  builder) ships as v0.7.0 once M0.5 (manual validation in Word) is
+  completed by the user.
+- `src/source-finders/` is a new directory. Explicitly listed in
+  `package.json#files` (already covered by `src` but made explicit so a
+  future review can spot it).
+
 ## v0.6.6 — malformed DOI marker tolerance (HIGH-3)
 
 ### Fix

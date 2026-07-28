@@ -10,6 +10,8 @@
 // a single plaintext string, which is the main reason we picked OpenAlex
 // over the existing Serper/Exa backends for the LLM prompt content.
 
+import { computeConfidence } from "./confidence.ts";
+
 /**
  * A normalised bibliographic finding returned by any of the source-finder
  * backends. The richer fields here (abstract, meshTerms, concepts, tldr)
@@ -106,21 +108,30 @@ export async function searchOpenAlex(
  * the abstract locally). The reconstruction is lossy for very long
  * abstracts if words are out of index range, but the resulting string is
  * good enough for the LLM to verify a citation supports a claim.
+ *
+ * Robustness (M1.1 audit MED-1):
+ *   - Non-integer positions and negative positions are ignored (they
+ *     would distort the result).
+ *   - When two words collide on the same slot (rare; OpenAlex is well-
+ *     behaved but defensive), they are concatenated with a space rather
+ *     than the latter silently overwriting the former.
+ *   - The pre-allocated `tokens[pos]` indexing is replaced with a
+ *     sparse-array pass that preserves alphabetical/positional order
+ *     without springing new holes.
  */
 export function reconstructAbstract(invertedIndex: Record<string, number[]>): string {
   const positions: { word: string; pos: number }[] = [];
   for (const [word, posArray] of Object.entries(invertedIndex)) {
     if (!Array.isArray(posArray)) continue;
     for (const p of posArray) {
-      if (typeof p === "number") positions.push({ word, pos: p });
+      if (Number.isInteger(p) && p >= 0) positions.push({ word, pos: p as number });
     }
   }
   positions.sort((a, b) => a.pos - b.pos);
   const tokens: string[] = [];
   for (const { word, pos } of positions) {
-    tokens[pos] = word;
+    tokens[pos] = tokens[pos] ? `${tokens[pos]} ${word}` : word;
   }
-  // Strip undefined holes (rare, but the API can have gaps).
   return tokens.filter(Boolean).join(" ");
 }
 
@@ -129,15 +140,20 @@ function normaliseWork(w: OpenAlexWork): Finding {
   const title = w.title ?? "(untitled)";
   const authors: Finding["authors"] = (w.authorships ?? [])
     .map((a) => {
-      const name = a.author?.display_name ?? "";
+      // OpenAlex returns `author: null` for institutional authorships
+      // (e.g. `OrcidAuth` records without a real person). Drop them
+      // entirely rather than fabricating a sentinel author.
+      if (!a.author) return null;
+      const name = a.author.display_name ?? "";
       // Heuristic split on "Family, Given" → "Family Given"
       // OpenAlex normally returns "Family Name" already; if it has a
       // comma (e.g. institution), treat the whole as family.
       const [family, given] = name.includes(",")
         ? name.split(",").map((s) => s.trim())
         : [name, undefined];
-      return { family: family ?? "?", given, orcid: a.author?.orcid };
-    });
+      return { family: family || "?", given, orcid: a.author.orcid };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
   const venue = w.primary_location?.source?.display_name ?? undefined;
   const oaUrl = w.open_access?.oa_url ?? w.best_oa_location?.pdf_url ?? undefined;
   const concepts = (w.concepts ?? [])
@@ -148,7 +164,9 @@ function normaliseWork(w: OpenAlexWork): Finding {
     ? reconstructAbstract(w.abstract_inverted_index)
     : undefined;
   const pages = w.biblio
-    ? [w.biblio.first_page, w.biblio.last_page].filter(Boolean).join("-") || undefined
+    ? (w.biblio.first_page === w.biblio.last_page
+        ? w.biblio.first_page ?? undefined
+        : [w.biblio.first_page, w.biblio.last_page].filter(Boolean).join("-") || undefined)
     : undefined;
   return {
     doi,
@@ -165,9 +183,13 @@ function normaliseWork(w: OpenAlexWork): Finding {
     isOpenAccess: w.open_access?.is_oa ?? undefined,
     oaUrl,
     source: "openalex",
-    // OpenAlex matches are full-text; confidence is high when both title AND
-    // an abstract are present, medium otherwise.
-    confidence: abstract ? "high" : "medium",
+    confidence: computeConfidence({
+      title,
+      doi,
+      abstract,
+      meshTerms: undefined,
+      tldr: undefined,
+    }),
     openAlexId: w.id,
   };
 }
