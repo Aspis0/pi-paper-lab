@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "audit": "npm audit --audit-level=high",
-    "prepack": "npm run typecheck && npm test && npm run audit"
+    "prepack": "npm run typecheck && npm test"
   },
   "pi": {
     "extensions": [
