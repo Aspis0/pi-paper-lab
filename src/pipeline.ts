@@ -110,6 +110,7 @@ function readInputFile(path: string): string {
 export async function pipelineCite(
   inputPath: string,
   pi: ExtensionAPI,
+  instructions: string = "",
 ): Promise<void> {
   // If .docx, extract to .md first so the LLM works on Markdown
   let workPath = inputPath;
@@ -127,6 +128,7 @@ export async function pipelineCite(
     `File: ${inputPath}`,
     `Existing citations: ${existingCitations}`,
     `Unresolved [CITE:topic] markers: ${existingMarkers}`,
+    instructions ? `User instructions: ${instructions}` : "",
     ``,
     `Step 1: I will identify claims that need citations (LLM cite-mark).`,
     `Step 2: For each claim, I will search Serper Scholar + CrossRef in batch.`,
@@ -134,7 +136,7 @@ export async function pipelineCite(
     `Step 4: I will generate the References section and produce a .docx.`,
   ].join("\n");
 
-  const prompt = buildCiteMarkPrompt(workPath, text);
+  const prompt = buildCiteMarkPrompt(workPath, text, "", false, instructions);
   pi.sendUserMessage(`${header}\n\n${prompt}`, { deliverAs: "followUp" });
 }
 
@@ -247,8 +249,12 @@ export async function pipelineWrite(
 }
 
 // === Build the LLM cite-mark prompt ===
-function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean): string {
+function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions?: string, includeRewrite?: boolean, userInstructions?: string): string {
   const finalizeCmd = `node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${filePath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`;
+
+  const userBlock = userInstructions
+    ? `USER INSTRUCTIONS (follow these):\n${userInstructions}\n\n`
+    : "";
 
   const rewriteBlock = includeRewrite
     ? [`STEP 1 — REWRITE + AI CHECK:`,
@@ -270,6 +276,7 @@ function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstructions
   return [
     `Paper draft: ${filePath}`,
     ``,
+    userBlock,
     `---`,
     text,
     `---`,

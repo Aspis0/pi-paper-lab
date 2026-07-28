@@ -84,11 +84,15 @@ export default function (pi: ExtensionAPI) {
   // === 3. Two visible pipeline commands + helper commands ===
 
   pi.registerCommand("paper-cite", {
-    description: "Read a draft, identify claims needing citations (LLM cite-mark), batch search sources, assign DOIs, generate bibliography + Word .docx. Usage: /paper-cite <file.md>",
+    description: "Read a draft, identify claims needing citations (LLM cite-mark), batch search sources, assign DOIs, generate bibliography + Word .docx. Usage: /paper-cite <file.md> [instructions...]",
     handler: async (args, ctx) => {
-      const target = args.trim().replace(/["']/g, ""); // entire arg is the file path
+      const raw = args.trim().replace(/["']/g, "");
+      // Split at .md or .docx boundary — everything after is instructions
+      const m = raw.match(/^(.+?\.(?:md|docx))\s*(.*)$/s);
+      const target = m ? m[1] : raw;
+      const instructions = m ? m[2] : "";
       if (!target) {
-        ctx.ui.notify("Usage: /paper-cite <file-path.md>", "warning");
+        ctx.ui.notify("Usage: /paper-cite <file-path.md> [cite instructions...]", "warning");
         return;
       }
       try {
@@ -97,7 +101,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Could not read ${target}: ${String(err)}`, "error");
         return;
       }
-      await pipelineCite(target, pi);
+      await pipelineCite(target, pi, instructions);
     },
   });
 
