@@ -132,65 +132,83 @@ export async function resolveCitation(
   const num = opts?.numResults ?? 5;
   const candidates: ResolveResult["candidates"] = [];
   const backend = loadConfig().citation_backend ?? "serper";
+  const config = loadConfig();
+  const hasSerperKey = !!(process.env.SERPER_API_KEY ?? config.serper);
+  const hasExaKey = !!(process.env.EXA_API_KEY ?? config.exa);
 
-  // 1. Backend-specific search (Serper / Exa / both / auto)
-  if (backend === "serper" || backend === "both") {
+  // Helper: run Serper, push results
+  const runSerper = () => searchScholar(topic, { num, signal: opts?.signal }).then(r => {
+    for (const s of r) {
+      const authors = Array.isArray(s.authors) ? s.authors.join(", ") : (s.authors ?? "");
+      candidates.push({
+        title: s.title ?? "(untitled)",
+        authors,
+        year: s.year ?? "?",
+        venue: s.venue,
+        link: s.link,
+        source: "scholar",
+        snippet: s.snippet,
+        citations: s.citations,
+      });
+    }
+  }).catch(err => {
+    candidates.push({
+      title: `(Serper Scholar search failed: ${String(err).slice(0, 80)})`,
+      authors: "",
+      year: "?",
+      source: "scholar",
+    });
+  });
+
+  // Helper: run Exa, push results. Returns true if any results added.
+  const runExa = async (): Promise<number> => {
     try {
-      const scholar = await searchScholar(topic, { num, signal: opts?.signal });
-      for (const r of scholar) {
-        const authors = Array.isArray(r.authors) ? r.authors.join(", ") : (r.authors ?? "");
+      const exaResults = await searchExa(topic, { num, signal: opts?.signal });
+      for (const r of exaResults) {
+        const year = r.publishedDate ? new Date(r.publishedDate).getFullYear() : undefined;
         candidates.push({
           title: r.title ?? "(untitled)",
-          authors,
-          year: r.year ?? "?",
-          venue: r.venue,
-          link: r.link,
+          authors: r.author ?? "",
+          year: year ?? "?",
+          venue: undefined,
+          link: r.url,
           source: "scholar",
-          snippet: r.snippet,
-          citations: r.citations,
+          snippet: r.highlights?.[0],
         });
       }
+      return exaResults.length;
     } catch (err) {
-      // Scholar is optional; continue without it
       candidates.push({
-        title: `(Serper Scholar search failed: ${String(err).slice(0, 80)})`,
+        title: `(Exa search failed: ${String(err).slice(0, 80)})`,
         authors: "",
         year: "?",
         source: "scholar",
       });
+      return 0;
     }
-  }
+  };
 
-  if (backend === "exa" || backend === "both" || backend === "auto") {
-    // For "auto": only run Exa if Serper key is missing OR if Exa is preferred
-    if (backend === "exa" || backend === "both" ||
-        (backend === "auto" && !process.env.SERPER_API_KEY && !loadConfig().serper)) {
-      try {
-        const exaResults = await searchExa(topic, { num, signal: opts?.signal });
-        for (const r of exaResults) {
-          const year = r.publishedDate ? new Date(r.publishedDate).getFullYear() : undefined;
-          candidates.push({
-            title: r.title ?? "(untitled)",
-            authors: r.author ?? "",
-            year: year ?? "?",
-            venue: undefined,  // Exa doesn't return venue
-            link: r.url,
-            source: "scholar",  // tag as "scholar" for downstream compatibility
-            snippet: r.highlights?.[0],
-          });
-        }
-      } catch (err) {
-        // Exa is optional; continue without it
-        if (backend === "exa") {
-          candidates.push({
-            title: `(Exa search failed: ${String(err).slice(0, 80)})`,
-            authors: "",
-            year: "?",
-            source: "scholar",
-          });
-        }
+  // 1. Backend-specific search
+  if (backend === "serper") {
+    await runSerper();
+  } else if (backend === "exa") {
+    await runExa();
+  } else if (backend === "both") {
+    // Parallel query
+    await Promise.allSettled([runSerper(), runExa()]);
+  } else if (backend === "auto") {
+    // Per plan: try Exa first, fall back to Serper on failure or empty results.
+    if (hasExaKey) {
+      const exaCount = await runExa();
+      if (exaCount === 0 && hasSerperKey) {
+        // Exa returned 0 — treat as weak signal, fall back to Serper.
+        await runSerper();
       }
+    } else if (hasSerperKey) {
+      // No Exa key — use Serper directly.
+      await runSerper();
     }
+    // If neither key: candidates stay empty (CrossRef will still fill in).
   }
 
   // CrossRef search by topic (always runs, for DOI + Vancouver citation)
