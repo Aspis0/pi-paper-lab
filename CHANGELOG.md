@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.7.0-alpha.2 — M1.2 Europe PMC source-finder (third substep of the v0.7 Word-native citations plan)
+
+### Added
+
+- **`src/source-finders/europepmc.ts`** — new M1 source-finder backend.
+  `searchEuropePmc(query, { num, signal })` calls
+  `https://www.ebi.ac.uk/europepmc/webservices/rest/search` with
+  `resultType=core` (the audit HIGH-1 fix; the default `lite` resultType
+  omits the biomedical fields that motivate this backend). Returns
+  normalised `Finding[]` with MeSH terms, abstracts, full-text URLs,
+  PubMed/PMC IDs, and citedByCount.
+- Reuses the centralised `computeConfidence()` from M1.1.
+- **M1.2 audit fixes** (commit this release):
+  - **HIGH-1** — added `resultType=core` to the URL so the API actually
+    returns `abstractText`, `meshHeadingList`, `fullTextUrlList`.
+  - **HIGH-2** — corrected the author payload shape from the
+    non-existent `authors[]` to the real `authorList.author[]`.
+  - **MED-1** — when only `fullName` is present, the whole name goes
+    into `family` (no wrong-direction split that previously inverted
+    `"Pedro Saavedra"` to `family: "Pedro"`).
+  - **MED-2** — `parseYear` now extracts the leading 4-digit year from
+    any string and returns `undefined` for non-numeric inputs (no more
+    `NaN` years from `"in press"`).
+  - **LOW-1** — full-text URL selection prefers `availability === "Y"`
+    entries over the first URL on the list.
+  - **LOW-2** — `clampNum` now normalises to a finite integer in [1, 50];
+    negative, fractional, or NaN values are clamped.
+
+### Tests
+
+- `tests/europepmc.test.ts` now has 10 cases (was 7). Added: real-world
+  `authorList.author[]` shape, full-text URL availability preference,
+  `pubYear` edge cases, `num` clamping.
+
 ## v0.7.0-alpha.1 — M1.1 OpenAlex source-finder (third substep of the v0.7 Word-native citations plan)
 
 ### Added

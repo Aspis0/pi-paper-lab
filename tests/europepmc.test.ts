@@ -21,6 +21,7 @@ test("searchEuropePmc: happy path returns normalised Findings", async () => {
     assert.ok(url.includes("query="), "uses query param");
     assert.ok(url.includes("format=json"), "asks for JSON");
     assert.ok(url.includes("pageSize="), "pagination param");
+    assert.ok(url.includes("resultType=core"), "asks for core resultType (biomedical fields)");
     return {
       ok: true,
       status: 200,
@@ -38,6 +39,13 @@ test("searchEuropePmc: happy path returns normalised Findings", async () => {
               doi: "10.1242/dmm.052659",
               title: "A Drosophila tumor model identifies a conserved Upd-JAK/STAT-Akh axis.",
               authorString: "Yu K, Moroak GS, Verheyen EM",
+              authorList: {
+                author: [
+                  { firstName: "Kewei", lastName: "Yu", fullName: "Yu K", initials: "K" },
+                  { firstName: "G S", lastName: "Moroak", fullName: "Moroak GS", initials: "GS" },
+                  { firstName: "E M", lastName: "Verheyen", fullName: "Verheyen EM", initials: "EM" },
+                ],
+              },
               journalTitle: "Dis Model Mech",
               journalVolume: "19",
               journalIssue: "7",
@@ -94,8 +102,10 @@ test("searchEuropePmc: happy path returns normalised Findings", async () => {
     assert.equal(first.confidence, "high", "real title + DOI + abstract → high");
     assert.equal(first.pmid, "42299622");
     assert.equal(first.pmcid, "PMC9876543");
+    // authorList.author is the canonical core format and takes priority.
     assert.equal(first.authors.length, 3);
     assert.equal(first.authors[0]!.family, "Yu");
+    assert.equal(first.authors[0]!.given, "Kewei");
 
     const second = findings[1]!;
     assert.equal(second.doi, undefined);
@@ -150,7 +160,7 @@ test("searchEuropePmc: surfaces API errors", async () => {
   });
 });
 
-test("searchEuropePmc: parses structured authors[] when present", async () => {
+test("searchEuropePmc: parses structured authorList.author[] when present", async () => {
   await withMockFetch(async () => ({
     ok: true,
     status: 200,
@@ -162,10 +172,12 @@ test("searchEuropePmc: parses structured authors[] when present", async () => {
             id: "X",
             doi: "10.1/x",
             title: "T",
-            authors: [
-              { lastName: "Liu", firstName: "Ying", affiliation: "Harvard" },
-              { fullName: "Pedro Saavedra" },
-            ],
+            authorList: {
+              author: [
+                { lastName: "Liu", firstName: "Ying", fullName: "Liu Ying" },
+                { fullName: "Pedro Saavedra" }, // only fullName — conservative whole-name fallback
+              ],
+            },
           },
         ],
       },
@@ -175,8 +187,84 @@ test("searchEuropePmc: parses structured authors[] when present", async () => {
     assert.equal(findings[0]!.authors.length, 2);
     assert.equal(findings[0]!.authors[0]!.family, "Liu");
     assert.equal(findings[0]!.authors[0]!.given, "Ying");
-    assert.equal(findings[0]!.authors[1]!.family, "Pedro");
-    assert.equal(findings[0]!.authors[1]!.given, "Saavedra");
+    // M1.2 audit MED-1: when only fullName is present, we do NOT split —
+    // the whole name goes into family. This avoids the wrong-direction
+    // split that 'Pedro Saavedra' → family: 'Pedro' would produce.
+    assert.equal(findings[0]!.authors[1]!.family, "Pedro Saavedra");
+    assert.equal(findings[0]!.authors[1]!.given, undefined);
+  });
+});
+
+test("searchEuropePmc: prefers AVAILABLE full-text URL over first URL", async () => {
+  await withMockFetch(async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      resultList: {
+        result: [
+          {
+            id: "X",
+            doi: "10.1/x",
+            title: "T",
+            fullTextUrlList: {
+              fullTextUrl: [
+                { url: "https://bad.example.com", availability: "N" },
+                { url: "https://good.example.com", availability: "Y" },
+              ],
+            },
+          },
+        ],
+      },
+    }),
+  } as any), async () => {
+    const findings = await searchEuropePmc("test");
+    assert.equal(findings[0]!.oaUrl, "https://good.example.com", "skips N-marked URLs");
+  });
+});
+
+test("searchEuropePmc: handles malformed pubYear (in press, 2024a, 2024-01-15)", async () => {
+  await withMockFetch(async () => ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      resultList: {
+        result: [
+          { id: "1", title: "T1", doi: "10.1/1", pubYear: "in press" },
+          { id: "2", title: "T2", doi: "10.1/2", pubYear: "2024a" },
+          { id: "3", title: "T3", doi: "10.1/3", pubYear: "2024-01-15" },
+          { id: "4", title: "T4", doi: "10.1/4", pubYear: "2024" },
+          { id: "5", title: "T5", doi: "10.1/5" },
+        ],
+      },
+    }),
+  } as any), async () => {
+    const findings = await searchEuropePmc("test");
+    assert.equal(findings[0]!.year, undefined, "in press → undefined");
+    assert.equal(findings[1]!.year, 2024, "2024a → 2024 (leading 4 digits)");
+    assert.equal(findings[2]!.year, 2024, "2024-01-15 → 2024");
+    assert.equal(findings[3]!.year, 2024);
+    assert.equal(findings[4]!.year, undefined, "missing pubYear → undefined");
+  });
+});
+
+test("searchEuropePmc: clamps malformed num to a valid finite integer", async () => {
+  const seenPageSizes: string[] = [];
+  await withMockFetch(async (input: any) => {
+    seenPageSizes.push(new URL(String(input)).searchParams.get("pageSize") ?? "");
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ resultList: { result: [] } }),
+    } as any;
+  }, async () => {
+    await searchEuropePmc("x", { num: -1 });
+    await searchEuropePmc("x", { num: 2.5 });
+    await searchEuropePmc("x", { num: Number.NaN });
+    await searchEuropePmc("x", { num: 999 });
+    assert.deepEqual(seenPageSizes, ["1", "2", "5", "50"], "clamped to [1, 50] integer");
   });
 });
 
