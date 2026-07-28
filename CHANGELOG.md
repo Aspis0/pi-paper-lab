@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.7.0-alpha.7 — M3 audit fixes (5 HIGH + 4 MED + 3 LOW)
+
+Addressed the M3 hostile-audit findings (see /tmp/audit-m3.md).
+
+### Fixed
+
+**HIGH**
+- **HIGH-1**: the M2 block now has the "After the user picks" step back,
+  so the LLM knows what to do once the user picks a candidate. Also
+  states that the menu's labels (a)/(b)/etc ARE the candidate ids.
+- **HIGH-2**: the DOI INVARIANT reference to "CITATIONS ALREADY
+  PRESENT" is now conditional. When no existing citations are
+  present, the reference is omitted (otherwise the LLM would look
+  for a block that does not exist).
+- **HIGH-3**: MANDATORY VERIFY_CITATION now describes the actual
+  flow honestly. The tool returns a structured prompt + abstract;
+  the LLM must READ the abstract and decide. The wording no
+  longer claims the tool returns a verdict directly.
+- **HIGH-4**: the "paper will be rejected" bluff is removed. The
+  honest wording is "no code enforcement" with a `// KNOWN`
+  comment in the source for future maintainers.
+- **HIGH-5**: the CITE block now says "PAUSE the batch and present
+  the menu(s) to the user before proceeding" when an
+  AMBIGUOUS menu is returned mid-batch. Resolves the
+  parallel-vs-synchronous conflict.
+
+**MED**
+- **MED-2**: a recovery path after REFUTES is now specified
+  ("re-run find_citation with a different query; if the second
+  search also fails, emit [CITATION NEEDED]").
+- **MED-3**: the CITE block clarifies REFUTES handling ("swap the
+  [N] to the next candidate in-place; do not renumber the
+  others").
+
+**LOW**
+- **LOW-2**: the CITE block is now a reference to the
+  DISAMBIGUATION / ANTI-HALLUCINATION / VERIFY_CITATION rules
+  instead of repeating them. The prompt stays under the 8000
+  char sanity bound.
+
+### Tests
+
+- `tests/prompt-m3.test.ts` (8 cases): the new M3 blocks are
+  present, the bluff wording is gone, the MANDATORY VERIFY_CITATION
+  block describes the actual flow, the M2 block has the
+  post-pick step, the conditional CITATIONS ALREADY PRESENT
+  reference works with and without existing citations, the CITE
+  block tells the LLM to pause for AMBIGUOUS menus.
+
 ## v0.7.0-alpha.6 — M3 prompt improvements
 
 ### Tightened

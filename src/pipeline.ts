@@ -345,6 +345,7 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
   // Without (2), the LLM would re-mark already-cited claims with [CITE:topic],
   // causing duplicate citations and breaking the bibliography.
   let cacheBlock = "";
+  let hasExistingCitations = false;
   try {
     const sidecar = loadCitationSidecar(filePath);
     // Inline scan: every [N](<doi:...>) or [N](doi:...) already in the prose.
@@ -370,6 +371,7 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
       if (n >= 1 && n < 1000) bareNumbers.add(n);
     }
     if (inlineCount > 0 || sidecarCount > 0 || bareNumbers.size > 0) {
+      hasExistingCitations = true;
       // Merge inline (priority) over sidecar. Inline wins because the user
       // just wrote it; sidecar could be stale from a previous session.
       const merged = new Map<number, { doi: string; source: "inline" | "cache" }>();
@@ -426,22 +428,33 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
   // v0.7.0 (M2.2 + M3): disambiguation, anti-hallucination, mandatory
   // verification. The block is the most important contract between the
   // LLM and our resolve pipeline; keep the wording tight and explicit.
+  //
+  // KNOWN: the M3 block contains a "paper will be rejected" warning
+  // that is not enforced in code. It is a prompt-engineering safeguard
+  // that the LLM will treat as a strong signal but a determined LLM
+  // can ignore. The honest contract is the DOI INVARIANT itself;
+  // the rejection threat is a behavioural nudge.
+  const citeBlockRef = hasExistingCitations
+    ? " OR DOIs in CITATIONS ALREADY PRESENT"
+    : "";
   const clarifyBlock = [
     `━━━ DISAMBIGUATION (M2) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `When you are NOT sure between multiple candidates:`,
     `  1. Call find_citation with a \`claim\` field set to the sentence you need to back up. The tool appends a "CLARIFICATIONS NEEDED" menu you MUST present to the user verbatim — do NOT pick a candidate yourself.`,
-    `  2. If the user cannot decide or you cannot reach them: emit \`[ASK: short, single-line question]\` inline in the prose, OR \`[CITATION NEEDED: topic]\` to mark the gap honestly.`,
+    `  2. After the user picks (a)/(b)/etc, use the chosen candidate's DOI for [N](<doi:...>). The menu's labels ARE the candidate ids.`,
+    `  3. If the user cannot decide or you cannot reach them: emit \`[ASK: short, single-line question]\` inline in the prose, OR \`[CITATION NEEDED: topic]\` to mark the gap honestly.`,
     ``,
     `━━━ ANTI-HALLUCINATION (M3) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `Every DOI you write MUST appear in a find_citation candidate above. The DOI INVARIANT:`,
-    `  DOI_used(X) → X ∈ {DOIs returned by find_citation OR DOIs in CITATIONS ALREADY PRESENT}`,
-    `If find_citation returns no candidate, emit \`[CITATION NEEDED: topic]\`. DOIs you invent are an automatic test failure and the paper will be rejected.`,
+    `  DOI_used(X) → X ∈ {DOIs returned by find_citation${citeBlockRef}}`,
+    `If find_citation returns no candidate, emit \`[CITATION NEEDED: topic]\`. DOIs you invent violate this contract. (Note: this rule is prompt-engineering — there is no code enforcement. Be honest.)`,
     ``,
     `━━━ MANDATORY VERIFY_CITATION (M3) ━━━━━━━━━━━━━━━━━━━━━━━`,
-    `For every [N] you emit, you MUST call verify_citation(claim_sentence, doi) before the FINALIZE step. The tool returns SUPPORTS / REFUTES / UNCLEAR.`,
-    `  - SUPPORTS → keep the citation.`,
-    `  - REFUTES → that DOI is wrong. Pick a different candidate (or emit [CITATION NEEDED]).`,
-    `  - UNCLEAR → the abstract is missing or ambiguous. Prefer a different candidate; if none, emit [CITATION NEEDED].`,
+    `For every [N] you emit, you MUST call verify_citation(claim_sentence, doi) before the FINALIZE step.`,
+    `verify_citation does NOT return a verdict directly — it returns the reference's abstract plus a structured prompt. You MUST read the abstract, compare it against the claim, and answer:`,
+    `  SUPPORTS — the reference's content backs the claim. Keep the citation.`,
+    `  REFUTES — the reference's content contradicts the claim. That DOI is wrong. Pick a different candidate. If all candidates for this claim REFUTE, re-run find_citation with a different query; if the second search also fails, emit [CITATION NEEDED].`,
+    `  UNCLEAR — the abstract is missing or ambiguous. Prefer a different candidate; if none, emit [CITATION NEEDED].`,
     ``,
   ].join("\n");
 
@@ -458,8 +471,10 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
     rewriteBlock,
     studyBlock,
     `━━━ CITE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-    `For every factual claim NOT already cited in the CITATIONS ALREADY PRESENT block, call find_citation with \`claim\` set to the claim sentence (triggers disambiguation). Pass parallel batches. Assign NEW [N] sequentially starting from max(existing)+1. ALWAYS use angle brackets: [N](<doi:10.xxxx>).`,
-    `After ALL [N] are assigned, run verify_citation(claim, doi) for every one (mandatory, anti-hallucination guard). Replace REFUTES/UNCLEAR DOIs or emit [CITATION NEEDED].`,
+    `Follow the DISAMBIGUATION, ANTI-HALLUCINATION, and MANDATORY VERIFY_CITATION rules above. For every factual claim NOT already cited in the CITATIONS ALREADY PRESENT block, call find_citation with \`claim\` set to the claim sentence.`,
+    `Call find_citation in parallel batches (up to 5 claims per batch). If any call in a batch returns a "CLARIFICATIONS NEEDED" menu, PAUSE the batch and present the menu(s) to the user before proceeding.`,
+    `Assign NEW [N] sequentially starting from max(existing)+1. ALWAYS use angle brackets: [N](<doi:10.xxxx>).`,
+    `After ALL [N] are assigned, run verify_citation(claim, doi) for every one in a second pass. If a citation REFUTES, swap the [N] to the next candidate in-place (do not renumber the others). If ALL candidates for a claim REFUTE or are UNCLEAR, re-run find_citation with a different query.`,
     `Write the resolved file to ${filePath}.`,
     ``,
     `━━━ FINALIZE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
