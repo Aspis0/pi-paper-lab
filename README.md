@@ -90,6 +90,8 @@ species:
   → finalizeDoc → .docx with Vancouver references
 ```
 
+After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install via `pi install npm:pi-paper-lab`.
+
 ## Acknowledgements
 
 - [bun-docx](https://github.com/SFETNI/bun-docx). Markdown ↔ .docx conversion CLI used for file I/O.

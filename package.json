@@ -1,17 +1,51 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.1.0",
-  "description": "Writing-style guardrails for scientific text in pi. Distilled from real Drosophila genetics papers. Anti-AI-tells, discipline voice, reporting standards enforcement.",
+  "version": "0.6.0",
+  "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
+  "files": [
+    "extensions",
+    "src",
+    "data",
+    "README.md",
+    "PLAN-AGNOSTIC.md",
+    "PLAN-STUDY-PHASE.md",
+    "PLAN-EXA-BACKEND.md"
+  ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/anti-ai-lexicon.test.ts",
+    "prepack": "npm run typecheck && npm test"
   },
   "pi": {
     "extensions": ["./extensions/index.ts"]
   },
-  "keywords": ["pi", "pi-coding-agent", "extension", "scientific-writing", "drosophila", "anti-ai-tells", "biology"],
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "scientific-writing",
+    "anti-ai",
+    "citations",
+    "drosophila",
+    "mouse",
+    "cancer",
+    "biology",
+    "docx"
+  ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aspis0/pi-paper-lab.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Aspis0/pi-paper-lab/issues"
+  },
+  "homepage": "https://github.com/Aspis0/pi-paper-lab#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
