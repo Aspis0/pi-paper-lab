@@ -319,10 +319,11 @@ We cannot run Word in CI. Mitigations:
 
 ### 3.0 Step 0 — DONE (2026-07-28)
 
-The reference `.docx` was captured and unzipped. Golden XML templates saved
-to `data/word-reference-xml/`:
+The reference `.docx` (captured from real Word, renamed to
+`data/word-citation-reference.docx`) was unzipped. Golden XML templates
+saved to `data/word-reference-xml/`:
 - `content-types.xml`, `item1-sources.xml`, `itemProps1.xml`,
-  `item1.xml.rels`, `document.xml.rels`, `document.xml` (pretty-printed).
+  `item1.xml.rels`, `document.xml.rels`, `document.xml` (raw one-line, 7.2 KB).
 
 **Three corrections to my original assumptions** (§3.4–3.6 below are the
 fixed versions, derived from the real Word output):
@@ -342,7 +343,36 @@ fixed versions, derived from the real Word output):
 
 **Style switching lives at the `b:Sources` root**: the captured file has
 `SelectedStyle="\APASixthEditionOfficeOnline.xsl" StyleName="APA" Version="6"`.
-For IEEE / Vancouver we change these three attributes (see §3.10).
+For IEEE we change these three attributes (see §3.10 — IEEE only in v0.7).
+
+#### What Step 0 actually validates vs what it does NOT
+
+The Step 0 capture validates the **form** of Word's citation system:
+the exact OOXML parts, the SDT nesting, the relationship plumbing, the
+content-type rules. It does NOT validate the **behaviour** our v0.7.0
+promises:
+
+| Capability | Validated by Step 0? | Why |
+|---|---|---|
+| Word opens the `.docx` without repair prompt | Inferred (ZIP+XML valid), NOT live-confirmed | We have no Word on the build machine |
+| Sources appear in Source Manager → Current List | Inferred from the same structure Word itself writes | Same as above |
+| CITATION field renders as `[1]` in IEEE | NOT validated | The capture uses APA, not IEEE |
+| BIBLIOGRAPHY field renders a real bibliography | NOT validated | The capture has `Placeholder1` only + citations in author-year format |
+| Deleting a citation + F9 renumbers the rest | NOT validated | Needs a live Word session with a real IEEE doc |
+
+**Action M0.5** (added after the audit): before M4 starts, the user
+must run a small manual matrix in real Word and commit the artefacts:
+
+1. Insert 2 citations in IEEE style with DOIs to see whether
+   `F9` renders numbers in order of appearance.
+2. Delete the first citation, `F9`, verify the second citation is now
+   `[1]` and the bibliography still has 2 entries.
+3. Open the Source Manager, confirm both sources are in the Current List.
+4. Save the before/after `.docx` and screenshot the rendered output
+   into `data/word-citation-validation/`.
+
+This is the only way to prove the auto-renumber behaviour. The OOXML
+form is now captured; the runtime behaviour still needs human eyes.
 
 ### 3.9 Fallback if `--live` fails
 
@@ -355,39 +385,54 @@ Never produces a corrupt docx.
 
 **User decision (2026-07-28)**: citation style is selectable from the
 paper-lab settings (where API keys already live) — both IEEE and Vancouver
-must be supported.
+must be supported IN PRINCIPLE, but the audit (MED-4) flagged that the
+original "bundled .xsl at absolute path" strategy is not portable.
 
-The captured reference file shows style lives at the `<b:Sources>` root:
+#### v0.7.0: IEEE-only as the supported target
+
+For v0.7.0 we ship IEEE numeric as the only fully-supported style. The
+`citation_style` setting accepts `ieee` (default) or `apa`. The user
+selects `ieee` from `config.ts` (`citation_style: "ieee"`) and the
+builder writes:
+
 ```xml
-<b:Sources xmlns:b="..." SelectedStyle="\APASixthEditionOfficeOnline.xsl"
-           StyleName="APA" Version="6">
+<b:Sources xmlns:b="..." SelectedStyle="\IEEE2006.OfficeOnline.xsl"
+           StyleName="IEEE" Version="2026">
 ```
-So switching style = changing 3 attributes on the root element. Word ships
-these built-in `.xsl` styles on most installs:
 
-| Setting value          | `SelectedStyle`                         | `StyleName`  |
-|------------------------|-----------------------------------------|--------------|
-| `ieee` (biology default) | `\IEEE2006.OfficeOnline.xsl`           | `IEEE`       |
-| `apa` (Word default)   | `\APASixthEditionOfficeOnline.xsl`     | `APA`        |
-| `vancouver`            | NOT built-in on most installs           | `Vancouver`  |
+`IEEE2006.OfficeOnline.xsl` ships with Word on Windows + macOS. We have
+no portable way to test "is this `.xsl` present on the target machine"
+without actually opening Word; the risk surface is acceptable because
+`IEEE` is the most commonly-shipped built-in style.
 
-**Vancouver problem**: Word does not ship a Vancouver `.xsl` on most
-installs. Options, in preference order:
-1. Ship a Vancouver `.xsl` (BibWord Vancouver exists) in `data/styles/`
-   and reference it by absolute path in `SelectedStyle`. Word uses it if
-   the file is reachable when the document opens.
-2. Use IEEE (numerically equivalent, ships built-in) as the default
-   numeric style; document the trade-off in README.
-3. Map `vancouver` → IEEE at build time and warn the user.
+#### Vancouver: experimental, opt-in, requires local install
 
-`config.ts` gains a `citation_style` field (`ieee` | `vancouver` | `apa`,
-default `ieee` for biology). The builder reads it, picks the `.xsl`, and
-writes the 3 root attributes. If Vancouver is requested and no `.xsl` is
-bundled, the builder falls back to IEEE with a stderr warning.
+When the user sets `citation_style: "vancouver"`, the builder:
 
-Because style is a field-render-time concern, the SAME `.docx` can be
-re-rendered in a different style later by editing `SelectedStyle` in
-`customXml/item1.xml` + pressing F9 — no rebuild needed.
+1. Refuses to proceed with a clear error reporting that Vancouver is not
+   bundled in v0.7.0; prints the README section that describes the
+   opt-in path.
+2. Does NOT silently fall back to IEEE (the audit explicitly rejected
+   that). The user MUST explicitly choose `ieee` or install a Vancouver
+   XSL themselves.
+
+This is a deliberate scope cut: promising a non-portable Vancouver
+shipping as IEEE is worse than being honest about v0.7.0 limitations.
+
+#### v0.8+ candidate: bundled Vancouver XSL
+
+A future major can investigate bundling a Vancouver XSL (BibWord
+`Vancouver.OfficeOnline.xsl` is BSD-licensed) inside `data/styles/`. The
+builder would then write a `SelectedStyle` path relative to the user's
+Word startup directory (Word resolves these paths at startup). This work
+is explicitly out of scope for v0.7.0.
+
+#### Style switching remains a field-render-time concern
+
+The same `.docx` can be re-rendered in a different style later by editing
+`SelectedStyle` in `customXml/item1.xml` + pressing F9 — no rebuild
+needed. This is what the audit (MED-4) flagged as portable within Word:
+the OXML handles style switching without our involvement.
 
 ---
 
@@ -602,6 +647,11 @@ Intent detection (Italian + English) added to `buildCiteMarkPrompt`:
 
 Each phase is independently shippable as a point release on the 0.7 branch:
 
+- **M0.5 — Manual validation matrix in Word** — user runs IEEE-style
+  insert + delete + F9 matrix in real Word, commits before/after .docx
+  + screenshots to `data/word-citation-validation/`. **No code.** Required
+  before M4 can claim the renumber feature works. Live-validated proof
+  that the OOXML form from Step 0 actually produces the runtime behaviour.
 - **M1 — Source-finders (Feature B)** — `openalex.ts`, `europepmc.ts`, new
   `Finding` type, `resolveCitation` rewrite, `search_literature`/`get_abstract`
   tools, mocked tests. Ships as `0.7.0-alpha.1`. Lowest risk, highest
@@ -611,11 +661,12 @@ Each phase is independently shippable as a point release on the 0.7 branch:
 - **M3 — Prompt improvements (Feature D)** — tighter `buildCiteMarkPrompt`,
   mandatory verification, anti-hallucination guard, domain-aware study
   snapshot. `0.7.0-alpha.3`.
-- **M4 — Word-live builder (Feature A)** — Step 0 reference capture, the
-  `word-live-builder.ts` post-processor, `--live` CLI, golden-file + e2e
-  tests, fallback. Ships as `0.7.0`. Highest risk, saved for last so the
-  earlier features already de-risk it (better sources → better sources.xml;
-  clarify → cleaner tag/GUID discipline).
+- **M4 — Word-live builder (Feature A)** — (Step 0 already done;
+  M0.5 validates the runtime form.) `word-live-builder.ts` post-processor,
+  `--live` CLI, golden-file + e2e tests, fallback to static on failure.
+  Ships as `0.7.0`. Highest risk, saved for last so the earlier features
+  already de-risk it (better sources → better sources.xml; clarify →
+  cleaner tag/GUID discipline; M0.5 → confirmed behaviour target).
 - **M5 — Hardening + release** — refresh `package-lock.json`, CHANGELOG,
   README "live citations" section, `npm publish` (prepack without audit per
   v0.6.4 lesson), tag `v0.7.0`.
@@ -624,17 +675,17 @@ Each phase is independently shippable as a point release on the 0.7 branch:
 
 ## 11. Open questions for the user (decide before M1)
 
-1. **Word reference capture (Step 0)**: can you open Word once, insert one
-   citation + one bibliography via References → Insert Citation /
-   Bibliography, save as `data/word-citation-reference.docx`, and commit it?
-   This is the byte-level ground truth for the builder and removes 90% of
-   the OOXML risk. (If you can't, I'll derive the XML from the spec + the
-   citeground field pattern and we validate iteratively against your Word.)
-2. **Citation style**: target **IEEE** numeric `[1]` superscript, or
-   **Vancouver** `[1]` superscript, or both selectable? (Word ships IEEE
-   built-in on most installs; Vancouver may need a `.xsl`.)
-3. **`ask_user` tool**: synchronous `CLARIFICATIONS NEEDED` block first
-   (recommended, no new infra), or go straight to a real `ask_user` tool
-   that pauses the LLM?
-4. **New dependency**: OK to add `adm-zip` (and optionally
-   `fast-xml-parser` for validation)? Both tiny, pure-JS, MIT.
+1. **Word reference capture (Step 0)**: ✅ DONE 2026-07-28. User posted
+   `data/word citation reference.docx` (now renamed to
+   `data/word-citation-reference.docx`); captured to
+   `data/word-reference-xml/`. What is NOT done yet is the M0.5 manual
+   validation matrix (insert 2 IEEE citations, delete one, F9, verify
+   renumbering); see §3.0.
+2. **Citation style**: ✅ IEEE-only fully supported in v0.7.0; Vancouver
+   marker exists in `config.ts` but refuses to build (per audit MED-4).
+   Future major may bundle a Vancouver XSL — see §3.10.
+3. **`ask_user` tool**: ✅ real pausing tool (not synchronous block).
+   Implemented in M2.
+4. **New dependency**: `adm-zip` will be added in M4 (when the post-processor
+   ships). `fast-xml-parser` is optional — only added if xmllint-style
+   validation proves too painful in CI. Confirmation at M4 start.
