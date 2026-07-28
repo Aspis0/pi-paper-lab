@@ -509,8 +509,13 @@ export function finalizeDoc(
   // Fallback: plain form [N](doi:XXX) — but only for DOIs without parens (safe)
   const re = /\[(\d+)\]\((?:<doi:\s*([^>\n]+)>|doi:\s*([^)>\n]+))\)/g;
   let m: RegExpExecArray | null;
-  // Strip trailing punctuation (LLM bugs that leave `;` or `,` at end of DOI)
-  const cleanDoi = (s: string) => s.replace(/[;,.]$/, "").trim();
+  // Strip trailing punctuation/artifacts that LLMs sometimes leave inside a
+  // malformed DOI marker. A closing square bracket is never part of a DOI;
+  // it is the Markdown link bracket from input such as `[13](doi:10.x].`.
+  // Remove punctuation first, then the bracket, so both `10.x].` and
+  // `10.x]` normalize to the same DOI. Do not strip `)` here: parentheses
+  // are valid characters inside real DOI strings.
+  const cleanDoi = (s: string) => s.trim().replace(/[;,.]+$/, "").replace(/\]$/, "").trim();
   while ((m = re.exec(text)) !== null) {
     const num = parseInt(m[1]);
     const doi = cleanDoi(m[2] ?? m[3] ?? "");
@@ -618,18 +623,41 @@ export function finalizeDoc(
   // 2b. Defensive: catch malformed DOI markers (LLM bugs) — extract DOI from any
   // "[N](doi:...anything...)" pattern even if parens don't close properly.
   // This prevents raw DOI text from leaking into the body.
-  text = text.replace(/\[(\d+)\]\(doi:\s*([^\s\n][^)\n]*)/g, (_m, num, doi) => {
-    // Trim trailing semicolons/commas/periods that the LLM might have added
-    const cleanDoi = doi.replace(/[;,.]$/, "").trim();
-    if (cleanDoi.startsWith("10.")) {
-      // Try to add to citations if not already there
-      const n = parseInt(num);
-      if (!citations.has(n)) {
-        citations.set(n, `${n}. (doi:${cleanDoi})`);
+  // A malformed marker such as `[13](doi:10.1242/dmm.049298]` is common
+  // when a citation is copied from an LLM draft. Normalize its DOI before the
+  // lookup so the sidecar never stores the Markdown `]` artifact.
+  // Note: the well-formed regex above handles normal markers first; this
+  // fallback only handles a missing closing `)`.
+  text = text.replace(
+    /\[(\d+)\]\(doi:\s*(10\.[^\s\]\n]+)\]?/g,
+    (_m, num, doi) => {
+      const normalizedDoi = doi.replace(/[;,.]+$/, "").trim();
+      if (normalizedDoi.startsWith("10.")) {
+        const n = parseInt(num);
+        // The malformed marker was not handled by the well-formed scan above,
+        // so this is always a fresh entry. Do not use `has()` as a guard: a
+        // bare-marker placeholder may already have occupied the same number.
+        citations.delete(n);
+        let work: any | null = null;
+        try { work = lookupDoiSync(normalizedDoi); } catch { /* keep DOI stub */ }
+        if (work) {
+          const authors = (work.author ?? []).map((a: any) =>
+            a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ");
+          const year = work.published?.["date-parts"]?.[0]?.[0]
+            ?? work["published-print"]?.["date-parts"]?.[0]?.[0]
+            ?? work["published-online"]?.["date-parts"]?.[0]?.[0] ?? "?";
+          const title = work.title?.[0] ?? "(untitled)";
+          const journal = work["container-title"]?.[0] ?? "";
+          const vol = work.volume ?? "";
+          const pages = work.page ?? "";
+          citations.set(n, `${n}. ${authors}. ${title}. ${journal}. ${year}${vol ? ";" + vol : ""}${pages ? ":" + pages : ""}. doi:${normalizedDoi}`);
+        } else {
+          citations.set(n, `${n}. (doi:${normalizedDoi})`);
+        }
       }
-    }
-    return `<sup>[${num}]</sup>`;
-  });
+      return `<sup>[${num}]</sup>`;
+    },
+  );
 
   // 3. Append References section (DOI only here, never in text)
   if (citations.size > 0) {

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.6.6 — malformed DOI marker tolerance (HIGH-3)
+
+### Fix
+
+- **Malformed DOI marker tolerance.** A user-typed marker like
+  `[13](doi:10.1242/dmm.049298]` (missing `<doi:` opener, `]` instead of
+  `)`) previously produced a broken bibliography entry
+  `(doi:10.1242/dmm.049298])`. The DOI cleanup layer now strips trailing
+  `])` artifacts before the CrossRef lookup, so the DOI is captured cleanly
+  and the bibliography is rendered in proper Vancouver style.
+
+  Regression test added in `tests/anti-ai-lexicon.test.ts` (HIGH-3):
+  asserts the sidecar DOI is clean, the Vancouver entry is the real
+  CrossRef-resolved text (not the `(doi:...)` stub), and the `.docx`
+  prose contains neither the malformed DOI literal nor the broken
+  `(doi:10.1242/dmm.049298])` artifact.
+
 ## v0.6.3.2 — `--verify-all` + inline-citation preservation
 
 ### Fixes the user explicitly asked for
