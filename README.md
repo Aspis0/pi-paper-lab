@@ -2,6 +2,8 @@
 
 A [pi](https://github.com/earendil-works/pi-coding-agent) extension for writing scientific papers in any biology field. Anti-AI rewrite, Vancouver citations, `.docx` output.
 
+v0.7.0 adds **Word-native citations**: the generated `.docx` has live citation fields that renumber automatically when you edit the document in Word.
+
 Reads and writes `.docx` via the [bun-docx](https://www.npmjs.com/package/bun-docx) CLI (thanks to the bun-docx project for the file conversion backend).
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.
@@ -48,12 +50,28 @@ Interactive menu for API keys, domain selection, citation backend.
 
 `/paper-cite` skips the study phase. It finds citations for existing claims.
 
+### Word-native citations (new in v0.7.0)
+
+By default, `/paper-write` and `/paper-rewrite` produce a `.docx` with **Word-native citation fields** (`--live` mode). This means:
+
+- The `.docx` opens in Word and the **Source Manager** shows all your citations
+- In-text numbers renumber automatically when you delete/add citations (`Ctrl+A, F9`)
+- The bibliography regenerates from the source list
+
+To produce a static `.docx` (for final submission), pass `--static`:
+
+```
+/paper-write "topic" --static
+```
+
+The static output has `<sup>[N]</sup>` + a manual `## References` section — identical to v0.6.x.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/paper-write <description> [--output path]` | Generate text from a description |
-| `/paper-rewrite <file> [instructions]` | Rewrite anti-AI + add citations |
+| `/paper-write <description> [--output path] [--static]` | Generate text from a description. Default is `--live` (Word-native citations). Pass `--static` for submission-safe output |
+| `/paper-rewrite <file> [instructions] [--static]` | Rewrite anti-AI + add citations. Same `--live`/`--static` flag |
 | `/paper-cite <file> [--strict] [instructions]` | Add citations to existing draft. Pass `--strict` to forbid rewriting surrounding prose (citation-only mode) |
 | `/paper-lab` | API keys + domain + citation backend |
 
@@ -76,21 +94,30 @@ species:
 
 `/paper-lab` → option 6 picks:
 
-- `serper` (default): Google Scholar via Serper.dev
+- `auto` (default): tries CrossRef first (canonical metadata), falls back to Serper
+- `serper`: Google Scholar via Serper.dev
 - `exa`: Exa.ai publications index, 350M+ papers
 - `both`: parallel query, merge + dedupe
-- `auto`: try Exa first, fall back to Serper on failure or empty results
+
+v0.7.0 also adds **OpenAlex** and **Europe PMC** as primary source-finders (no key required, structured metadata + abstracts). These run automatically during the study phase to give the LLM richer context (abstracts, MeSH terms, citation counts).
 
 ## How it works
 
 ```
 /paper-write "topic"
-  → study_topic (search literature, save study-notes.md)
-  → write draft (grounded in study notes)
-  → ai_detect_statistical (check for AI-tells)
-  → find_citation per claim (batch)
-  → finalizeDoc → .docx with Vancouver references
+  → study_topic (search OpenAlex + Europe PMC + CrossRef, save study-notes.md)
+  → write draft (grounded in study notes, anti-AI voice rules)
+  → ai_detect_statistical (check for AI-tells, length-adaptive calibration)
+  → find_citation per claim (batch, with disambiguation if unclear)
+  → finalizeDoc [--live] → .docx with Word-native citations
 ```
+
+The `--live` flag (default in v0.7.0) produces a `.docx` with:
+- CustomXML source list (`customXml/item1.xml`) — Word's Source Manager sees all citations
+- CITATION fields in the body — renumber on `Ctrl+A, F9`
+- BIBLIOGRAPHY SDT at the end — regenerates from the source list
+
+The `--static` flag produces the same output as v0.6.x: `<sup>[N]</sup>` + manual `## References` section.
 
 After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install via `pi install npm:pi-paper-lab`.
 

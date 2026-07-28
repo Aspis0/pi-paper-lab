@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.7.0 — Word-native citations + improved source-finding
+
+**Headline feature**: the generated `.docx` now has **live Word citation fields** that renumber automatically when you edit the document in Word. Plus: better source-finding (OpenAlex, Europe PMC), disambiguation UX (ask when unsure), and tighter prompts.
+
+### What's new
+
+- **Word-native citations** (`--live` mode, now default):
+  - The `.docx` opens in Word and the Source Manager shows all citations
+  - In-text numbers renumber automatically (`Ctrl+A, F9`)
+  - The bibliography regenerates from the source list
+  - `--static` mode (for final submission) produces the old `<sup>[N]</sup>` + manual References output
+
+- **Improved source-finding** (Feature B):
+  - OpenAlex: structured metadata, abstracts, citation counts, OA links (free, no key)
+  - Europe PMC: biomedical abstracts + MeSH terms (free, no key)
+  - New `Finding` type with abstracts, concepts, confidence scores
+  - Better disambiguation: the LLM sees real abstracts, not just titles
+
+- **Disambiguation UX** (Feature C):
+  - The LLM only picks among candidates the resolver retrieved
+  - Uncertain citations become structured questions to the user
+  - `[ASK:question]` markers surface as "QUESTIONS FOR THE AUTHOR" in the .docx
+
+- **Tighter prompts** (Feature D):
+  - Anti-hallucination guard: "if you cannot point to a retrieved candidate, the citation does not exist"
+  - Mandatory verification step
+  - Domain-aware study snapshots
+
+- **Length-adaptive AI detector**:
+  - 5/8 statistical features now fire for short scientific paragraphs (100-300 words)
+  - Baselines calibrated separately for short scientific text vs long blog/essay text
+  - `lexicon_tells` weight increased to 55% (most reliable for short text)
+
+### Implementation
+
+- **M1.1** OpenAlex source-finder (alpha.1)
+- **M1.2** Europe PMC source-finder (alpha.2)
+- **M2.1** Clarify classifier (alpha.3)
+- **M2.2** Ask-when-unsure integration (alpha.5)
+- **M3** Prompt improvements (alpha.6)
+- **M3 audit** fixes (alpha.7)
+- **M4** Word-native citation builder (alpha.8)
+- **M4 audit** fixes (alpha.10): Vancouver parser, XML escaping, BIBLIOGRAPHY idempotency
+- **alpha.11**: Bug fixes (rather-than preservation, AI detector calibration, pipeline-write audit)
+
+### Files
+
+- `src/word-live-builder.ts` (NEW): post-processes bun-docx output to inject Word citation fields
+- `src/source-finders/openalex.ts` (NEW): OpenAlex API client
+- `src/source-finders/europepmc.ts` (NEW): Europe PMC API client
+- `src/clarify.ts` (NEW): disambiguation + ask-the-user UX
+- `src/statistical-ai-detector.ts`: length-adaptive calibration
+- `src/pipeline.ts`: `--live` flag, new prompts, stop-word filter for slug generation
+- `tests/word-live-builder.test.ts` (NEW): 20 tests
+- `tests/openalex.test.ts` (NEW): 13 tests
+- `tests/europepmc.test.ts` (NEW): 10 tests
+- `tests/clarify.test.ts` (NEW): 47 tests
+- `tests/rather-than-preservation.test.ts` (NEW): 5 tests
+- `tests/statistical-detector-calibration.test.ts` (NEW): 6 tests
+
+### Dependencies
+
+- Added `adm-zip` (pure-JS, MIT, ~50KB) for ZIP post-processing
+
+### Tests
+
+All **175 tests passing** (offline, no crossref live calls).
+
 ## v0.7.0-alpha.11 — Bug fixes: rather-than, AI detector, pipeline-write audit
 
 Critical bug fixes and calibration improvements based on audit feedback.
