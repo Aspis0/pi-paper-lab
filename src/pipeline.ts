@@ -399,6 +399,11 @@ export function finalizeDoc(
   // the user re-edits prose without changing references) resolve WITHOUT a
   // CrossRef roundtrip. This both speeds things up AND prevents the silent
   // orphan-citation bug we had in v0.6.2.
+  //
+  // HIGH-1 fix: cache entries only populate `citations` PROVISIONALLY —
+  // the inline-`[N](doi:X)` scan below will EVICT a cached entry if the
+  // user changed the DOI for that [N] in the prose. Without this, silently
+  // trusting the cache would let a stale DOI persist forever.
   const sidecar = useSidecar ? loadCitationSidecar(markdownPath) : new Map<number, SidecarEntry>();
   for (const [num, entry] of sidecar.entries()) {
     citations.set(num, entry.vancouver);
@@ -413,7 +418,16 @@ export function finalizeDoc(
   while ((m = re.exec(text)) !== null) {
     const num = parseInt(m[1]);
     const doi = cleanDoi(m[2] ?? m[3] ?? "");
-    if (!doi || citations.has(num)) continue;
+    if (!doi) continue;
+    // HIGH-1 fix: if we already have a citation cached for this N, compare
+    // DOIs. If they differ, the user has re-pointed [N] at a different paper
+    // — evict the stale entry and re-fetch from CrossRef. If they match,
+    // skip the (expensive) lookup entirely.
+    if (citations.has(num)) {
+      const cachedEntry = sidecar.get(num);
+      if (cachedEntry?.doi === doi) continue; // cache hit, DOI matches
+      citations.delete(num); // stale or first-time — start fresh
+    }
     try {
       const work = lookupDoiSync(doi);
       if (work) {
@@ -455,8 +469,15 @@ export function finalizeDoc(
   //
   // We do NOT touch [CITATION NEEDED: ...] (those are LLM work-in-progress
   // markers, not user-authored [N] references).
+  //
+  // CRIT-1 fix: skip `[N]` that already lives inside `<sup>...</sup>` tags.
+  // Without this guard, the DOI-strip in step 2 produces `<sup>[1]</sup>`
+  // which step 2a would re-wrap into `<sup><sup>[1]</sup></sup>` on every
+  // run that has resolved DOI markers. The negative lookbehind anchors to
+  // the literal `<sup>` opening tag of any preceding marker, so re-stripping
+  // cannot nest.
   const bareNums = new Set<number>();
-  const bareRe = /\[(\d+)\](?!\()/g;
+  const bareRe = /(?<!<sup>)\[(\d+)\](?!\()/g;
   let bm: RegExpExecArray | null;
   while ((bm = bareRe.exec(text)) !== null) {
     const n = parseInt(bm[1]);
@@ -474,7 +495,8 @@ export function finalizeDoc(
       }
     }
     // Convert all bare [N] → <sup>[N]</sup> so the .docx has consistent styling.
-    text = text.replace(bareRe, (_m, num) => `<sup>[${num}]</sup>`);
+    // Apply the same negative lookbehind to avoid nesting inside existing tags.
+    text = text.replace(/(?<!<sup>)\[(\d+)\](?!\()/g, (_m, num) => `<sup>[${num}]</sup>`);
   }
 
   // 2a-bis. Use sidecar to resolve bare [N] markers (v0.6.3).
@@ -510,6 +532,26 @@ export function finalizeDoc(
   if (citations.size > 0) {
     const refs = [...citations.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c).join("\n\n");
     text += `\n\n---\n\n## References\n\n${refs}\n`;
+  }
+
+  // 3a. CRIT-2 fix: detect which citation numbers are actually USED in the
+  // processed text, and prune `citations` (and the sidecar write below)
+  // to only those. Otherwise, if the user removed `[N]` from the prose in
+  // a previous edit, the sidecar keeps it forever — and the bibliography
+  // ends up listing a reference that nothing in the body cites.
+  //
+  // We scan the FINAL text (after all <sup>[N]</sup> conversion) for any
+  // `<sup>[N]</sup>` occurrence. The set of N's that appear is the truth.
+  {
+    const used = new Set<number>();
+    const usedRe = /<sup>\[(\d+)\]<\/sup>/g;
+    let um: RegExpExecArray | null;
+    while ((um = usedRe.exec(text)) !== null) {
+      used.add(parseInt(um[1]));
+    }
+    for (const num of [...citations.keys()]) {
+      if (!used.has(num)) citations.delete(num);
+    }
   }
 
   // 3b. Normalize any leftover references LLM wrote directly in the document.

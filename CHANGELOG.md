@@ -1,11 +1,14 @@
 # Changelog
 
-## v0.6.3 — citation sidecar cache
+## v0.6.3 — citation sidecar cache + audit fixes
 
-Every successful `finalizeDoc` now writes a sidecar file `<draft>.citations.json`
-mapping each `[N]` to its resolved `{doi, vancouver}` text. On the next run
-(after prose edits, paragraph additions, or re-running `/paper-cite` over
-an existing file), the sidecar is loaded *before* CrossRef is called, so:
+### Sidecar cache (the main feature)
+
+Every successful `finalizeDoc` writes a sidecar file
+`<draft>.citations.json` mapping each `[N]` to its resolved
+`{doi, vancouver}` text. On the next run (after prose edits, paragraph
+additions, or re-running `/paper-cite` over an existing file), the sidecar
+is loaded *before* CrossRef is called, so:
 
 - Bare `[N]` markers from your edits re-materialize into a full bibliography
   with zero re-resolution cost.
@@ -35,9 +38,27 @@ Schema (v1):
 Malformed/missing sidecars fail open: `finalizeDoc` falls back to direct
 CrossRef lookup as if there were no cache.
 
-Also fixes the v0.6.2 silent orphan-citation bug: if `finalizeDoc` ran on
-a file with bare `[N]` markers from prior edits, the `.docx` previously
-ended up with superscript numbers pointing to nothing.
+### Bug fixes from the v0.6.3 hostile audit
+
+- **CRIT-1** — nested `<sup><sup>[N]</sup></sup>` from re-running on a file
+  that had resolved-DOI markers. Fixed by negative lookbehind in the
+  bare-marker regex (`(?<!<sup>)\[(\d+)\](?!\()`).
+- **CRIT-2** — ghost references in bibliography from citations the user
+  had removed from the prose. Fixed by pruning the sidecar write to only
+  the citation numbers actually present in the processed text
+  (`<sup>[N]</sup>` scan).
+- **HIGH-1** — stale-cache DOI override. When the user changed the DOI
+  for an existing `[N]` in the prose, the cache silently won. Fixed by
+  DOI comparison in the inline-marker scan: if `cached.doi !== newDoi`,
+  evict and re-fetch via CrossRef.
+- **HIGH-2** — `--no-cache` test was a tautology (deleted sidecar first,
+  then verified `--no-cache` worked against an empty cache). New test
+  plants a deliberately wrong cached DOI and verifies both branches
+  (cache-honored vs `--no-cache` override).
+- **MED-1** — removed unused `realpathSync` imports from `bin/finalize.mjs`
+  and `tests/finalize-cli.test.ts`.
+- **MED-2** — `--help` after the filename was silently ignored. Fixed in
+  the argv parser so the flag is honored anywhere in the command line.
 
 ## v0.6.2 — finalize-CLI fix
 

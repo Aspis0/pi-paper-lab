@@ -22,7 +22,7 @@
 //
 // Output: prints "Done! Word: <path> | References: <n>" on success.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
@@ -118,10 +118,12 @@ async function main() {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--no-cache") opts.noCache = true;
+    else if (a === "-h" || a === "--help") usageAndExit();
+    else if (a === "--version" || a === "-v") { /* handled below */ }
     else positional.push(a);
   }
   const arg = positional[0];
-  if (!arg || arg === "-h" || arg === "--help") usageAndExit();
+  if (!arg) usageAndExit();
   if (arg === "--version" || arg === "-v") {
     try {
       const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
