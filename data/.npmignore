@@ -1,0 +1,5 @@
+# Exclude backup files inside data/. The top-level .npmignore is ignored
+# when `files` array whitelists this directory — but nested .npmignore
+# files are honored within their subtree. See npm-packlist README.
+*.bak
+*.bak.*
