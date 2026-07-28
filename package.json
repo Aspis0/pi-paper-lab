@@ -1,6 +1,6 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.7.0-alpha.7",
+  "version": "0.7.0-alpha.8",
   "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
@@ -61,6 +61,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "adm-zip": "^0.6.0",
     "jiti": "^2.7.0",
     "js-yaml": "^4.1.0",
     "typebox": "^1.0.0"

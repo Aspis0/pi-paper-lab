@@ -540,12 +540,20 @@ export function finalizeDoc(
   opts?: {
     noCache?: boolean;
     verifyAll?: boolean;
+    /**
+     * v0.7.0 (M4): when true, after the static .docx is built the
+     * post-processor injects Word's native citation system so the
+     * user can edit the document in Word with renumbering-on-F9 and
+     * live Source Manager. Only meaningful when the user is on a
+     * machine with Word installed (M0.5 manual validation).
+     */
+    live?: boolean;
     // Dependency injection for tests. Production callers omit this and the
     // real `lookupDoiSync` (which hits CrossRef) is used. Tests pass a
     // fixture-backed function to keep the suite offline.
     lookupDoi?: (doi: string) => CrossRefWork | null;
   },
-): { docxPath: string; bibliographyCount: number; error?: string } {
+): { docxPath: string; bibliographyCount: number; error?: string; liveApplied?: boolean } {
   const docxPath = markdownPath.replace(/\.md$/i, ".docx");
   let text = readFileSync(markdownPath, "utf-8");
 
@@ -865,7 +873,48 @@ export function finalizeDoc(
     // permission denied, etc.). User loses cache, not bibliography.
   }
 
-  return { docxPath, bibliographyCount: citations.size };
+  // v0.7.0 (M4): if --live, post-process the .docx to inject Word's
+  // native citation system. The M0.5 manual matrix must validate the
+  // runtime behaviour (renumber on F9, source manager recognition).
+  // If buildWordLive throws (bad XML, missing part), fall back to the
+  // static .docx rather than fail the whole finalize.
+  if (opts?.live) {
+    try {
+      // Dynamic require (kept sync; the import is also async but we
+      // use the sync CommonJS-style require via createRequire so the
+      // call is compatible with the surrounding sync finalizeDoc).
+      const { createRequire } = require("node:module") as typeof import("node:module");
+      const req = createRequire(import.meta.url);
+      const { buildWordLive } = req("./word-live-builder.ts") as typeof import("./word-live-builder.ts");
+      const liveSources: Array<{ id: number; tag: string; title: string; year?: string; journal?: string; doi?: string; url?: string; authors?: { family: string; given?: string }[]; volume?: string; issue?: string; pages?: string }> = [];
+      for (const [num, entry] of citations.entries()) {
+        // Parse a Vancouver-format entry back into source fields. The
+        // format is "<num>. <authors>. <title>. <journal>. <year><vol>... doi:<doi>".
+        // This is lossy; the live builder uses best-effort parsing.
+        const m = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d+)(?:;(\S+?))?(?::(\S+?))?\.\s+doi:(\S+?)\.?$/);
+        if (m) {
+          const [, n, authors, title, journal, year, vol, pages, doi] = m;
+          const authorList = authors.split(/,\s*/).map((family) => ({ family }));
+          liveSources.push({
+            id: parseInt(n),
+            tag: `Ref${n}`,
+            title,
+            year,
+            journal: journal.trim(),
+            doi,
+            authors: authorList,
+            volume: vol,
+            pages,
+          });
+        }
+      }
+      buildWordLive(docxPath, liveSources, { style: "ieee" });
+    } catch (err: any) {
+      console.error("[paper-lab-finalize] WARN: --live build failed, falling back to static:", err?.message ?? err);
+    }
+  }
+
+  return { docxPath, bibliographyCount: citations.size, error: undefined, liveApplied: !!opts?.live };
 }
 
 // === Sidecar citation cache ===

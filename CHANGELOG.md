@@ -1,5 +1,75 @@
 # Changelog
 
+## v0.7.0-alpha.8 — M4 Word-native citation builder
+
+### Added
+
+- **`src/word-live-builder.ts`** — the M4 post-processor. Given a
+  .docx produced by `docx create`, injects Word's native citation
+  system so the user can edit the document in Word with renumbering
+  on F9 and live Source Manager recognition.
+  - `buildItem1Xml(sources, opts)` — the b:Sources source list
+    (per-source `<b:Source>` blocks with Tag, SourceType, Guid, authors,
+    title, journal, year, volume, issue, pages, DOI, URL, RefOrder).
+  - `buildItemProps1Xml(guid?)` — the `customXml/itemProps1.xml`
+    datastoreItem + schemaRef.
+  - `buildItem1RelsXml()` — the `customXml/_rels/item1.xml.rels`
+    pointing at itemProps1.xml.
+  - `patchContentTypesXml(ct)` — adds the itemProps1.xml Override
+    (idempotent).
+  - `patchDocumentRelsXml(rels)` — adds a customXml relationship
+    with the next free rId.
+  - `rewriteDocumentXml(doc)` — replaces every `<sup>[N]</sup>` run
+    with a `<w:sdt><w:citation/></w:sdt>` field; appends a
+    BIBLIOGRAPHY SDT (outer gallery + inner bibliography) at the
+    end of the body.
+  - `buildWordLive(docxPath, sources, opts)` — the end-to-end
+    function that opens the .docx with adm-zip, writes the 5
+    parts (item1.xml, itemProps1.xml, item1.xml.rels,
+    patched document.xml.rels, patched [Content_Types].xml,
+    rewritten document.xml), and saves.
+  - Style is selectable: `style: "ieee"` (default, ships with
+    Word), `style: "apa"` (also ships). Vancouver is refused (see
+    PLAN §3.10 and §11).
+- **Dependency**: `adm-zip` added to `package.json` (pure-JS, MIT,
+    ~50KB).
+- **`finalizeDoc` now accepts `opts.live`** — when true, after the
+  static .docx is built, the post-processor is invoked. Falls back
+  to the static .docx on any error. The result object gains
+  `liveApplied: boolean` so callers can confirm.
+- **`tests/word-live-builder.test.ts`** (13 cases, all offline):
+  - escapeXml: 5 reserved characters handled.
+  - buildSourcesXml: one <b:Source> per source, escaped journal,
+    escaped authors, RefOrder, second source without journal.
+  - buildItem1Xml: IEEE defaults, APA defaults, custom overrides.
+  - buildItemProps1Xml: schemaRef + ds:datastoreItem.
+  - buildItem1RelsXml: rId1 -> itemProps1.xml.
+  - patchContentTypesXml: adds the Override, idempotent.
+  - patchDocumentRelsXml: next free rId, customXml type, target.
+  - rewriteDocumentXml: replaces <sup>[N]</sup> with CITATION SDTs,
+    leaves prose without [N] untouched, appends BIBLIOGRAPHY.
+  - buildWordLive end-to-end: all 5 parts present, document.xml
+    contains CITATION + BIBLIOGRAPHY.
+- **`tests/word-live-builder.test.ts`** also has the live-flag smoke
+  test: `buildWordLive` on a manufactured minimal .docx produces the
+  expected parts.
+
+### KNOWN limitations (M0.5 must validate)
+
+- The b:Sources GUID is a deterministic per-id placeholder
+  (`{1-0000-...}`, `{2-0000-...}`). Word's reference manager may
+  treat this as a "new source" each time; a more robust impl would
+  hash the DOI into the GUID.
+- The Vancouver parsing in `finalizeDoc` (regex-based, best-effort)
+  may not reconstruct all fields. The live builder accepts whatever
+  is present.
+- We do NOT validate that Word's IEEE2006.OfficeOnline.xsl is
+  installed on the target machine. M0.5 is the manual check.
+- The customXml part is written with the FULL Word namespace dump
+  in some .docx variants. We PRESERVE the base document's root and
+  add only the needed namespace declarations; the README in
+  `data/word-reference-xml/` documents this contract.
+
 ## v0.7.0-alpha.7 — M3 audit fixes (5 HIGH + 4 MED + 3 LOW)
 
 Addressed the M3 hostile-audit findings (see /tmp/audit-m3.md).
