@@ -204,8 +204,11 @@ export async function pipelineRewrite(
 export async function pipelineWrite(
   description: string,
   pi: ExtensionAPI,
+  opts?: { outputPath?: string },
 ): Promise<void> {
-  const outPath = join(homedir(), "Desktop", "paper-write-output.md");
+  // Default: write to the CURRENT working directory (where pi is running).
+  // User can override with --output <path>.
+  const outPath = opts?.outputPath ?? join(process.cwd(), "paper-write-output.md");
   const notesPath = outPath.replace(/\.md$/, ".study-notes.md");
 
   const prompt = [
@@ -229,8 +232,12 @@ export async function pipelineWrite(
     `   e) Report number of papers reviewed.`,
     ``,
     `STEP 1 — WRITE: Use study-notes.md + system prompt voice rules. Ground every claim in study notes (cite paper N from candidate list). Use DOIs from study-notes.md, NOT invented ones. Write to ${outPath.replace(/\\/g, "/")}.`,
+    `   CRITICAL: Write ONLY the body text (paragraphs). DO NOT include any "References" section — the bibliography is added by finalizeDoc in STEP 4. DO NOT include any inline numbered references like [1], [2] in the body — those are added by STEP 3.`,
+    `   CRITICAL: Follow the user's request for length and structure. If they ask for a "full introduction", write a full-length introduction (typically 4-6 substantial paragraphs, 600-1200 words). Do not write short summaries.`,
     `STEP 2 — AI CHECK: Call ai_detect_statistical on your text. If score >40%, rewrite flagged sentences. Re-test. Max 3 rounds.`,
-    `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets. Update ${outPath.replace(/\\/g, "/")}.`,
+    `STEP 3 — CITE: Mark every factual claim with [CITE:topic]. Call find_citation for each (batch). Assign [N](<doi:10.xxxx>) — ALWAYS use angle brackets (even for simple DOIs without special chars). Update ${outPath.replace(/\\/g, "/")}.`,
+    `   CRITICAL: Each [N](<doi:...>) marker must be well-formed. Test your markers: they should be exactly "[1](<doi:10.1016/j.devcel.2015.03.001>)" with no missing parens, semicolons, or extra text.`,
+    `   For each citation, call verify_citation(claim_sentence, doi) to confirm the paper actually supports the claim. If verification fails, find a different paper.`,
     `STEP 4 — FINALIZE: Run this bash command:`,
     `   node --experimental-strip-types -e "import('${join(ROOT, 'src', 'pipeline.ts').replace(/\\/g, '/')}').then(({finalizeDoc}) => { const r = finalizeDoc('${outPath.replace(/\\/g, '/')}'); if (r.error) console.log('Error:', r.error); else console.log('Done! Word:', r.docxPath, '| References:', r.bibliographyCount); }).catch(err => console.log('Error:', err.message));"`,
     `STEP 5 — REPORT: Tell the user: number of papers studied, path to study-notes.md, path to .docx. Do NOT read the .docx (binary).`,
@@ -300,9 +307,11 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
   // Fallback: plain form [N](doi:XXX) — but only for DOIs without parens (safe)
   const re = /\[(\d+)\]\((?:<doi:\s*([^>\n]+)>|doi:\s*([^)>\n]+))\)/g;
   let m: RegExpExecArray | null;
+  // Strip trailing punctuation (LLM bugs that leave `;` or `,` at end of DOI)
+  const cleanDoi = (s: string) => s.replace(/[;,.]$/, "").trim();
   while ((m = re.exec(text)) !== null) {
     const num = parseInt(m[1]);
-    const doi = (m[2] ?? m[3] ?? m[4])?.trim();
+    const doi = cleanDoi(m[2] ?? m[3] ?? "");
     if (!doi || citations.has(num)) continue;
     try {
       const work = lookupDoiSync(doi);
@@ -329,6 +338,22 @@ export function finalizeDoc(markdownPath: string): { docxPath: string; bibliogra
   text = text.replace(/\[(\d+)\]\((?:<doi:\s*[^>\n]+>|doi:\s*[^)>\n]+)\)/g, (_m, num) => `<sup>[${num}]</sup>`);
   // Also strip any remaining [CITE:topic] → [CITATION NEEDED]
   text = text.replace(CITE_MARKER, (_m, topic) => `[CITATION NEEDED: ${topic}]`);
+
+  // 2b. Defensive: catch malformed DOI markers (LLM bugs) — extract DOI from any
+  // "[N](doi:...anything...)" pattern even if parens don't close properly.
+  // This prevents raw DOI text from leaking into the body.
+  text = text.replace(/\[(\d+)\]\(doi:\s*([^\s\n][^)\n]*)/g, (_m, num, doi) => {
+    // Trim trailing semicolons/commas/periods that the LLM might have added
+    const cleanDoi = doi.replace(/[;,.]$/, "").trim();
+    if (cleanDoi.startsWith("10.")) {
+      // Try to add to citations if not already there
+      const n = parseInt(num);
+      if (!citations.has(n)) {
+        citations.set(n, `${n}. (doi:${cleanDoi})`);
+      }
+    }
+    return `<sup>[${num}]</sup>`;
+  });
 
   // 3. Append References section (DOI only here, never in text)
   if (citations.size > 0) {

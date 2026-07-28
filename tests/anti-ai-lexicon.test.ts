@@ -309,3 +309,16 @@ assert(!hbst.includes("has been shown to"), `v0.4: 'has been shown to' removed (
 // --- v0.4: sloppy patterns loaded from YAML ---
 assert(lex.sloppyPatterns.vagueQuantifiers.length >= 5, `Sloppy: vagueQuantifiers loaded (got ${lex.sloppyPatterns.vagueQuantifiers.length})`);
 assert(lex.claimStrength.grades && Object.keys(lex.claimStrength.grades).length >= 4, `Claim: grades loaded (got ${Object.keys(lex.claimStrength.grades).length})`);
+
+// --- Malformed DOI marker handling (defensive regex) ---
+import { finalizeDoc } from "../src/pipeline.ts";
+import { mkdtempSync as mkdtempSyncMalformed, writeFileSync as writeFileSyncMalformed, rmSync as rmSyncMalformed } from "node:fs";
+import { tmpdir as tmpdirMalformed } from "node:os";
+import { join as joinMalformed } from "node:path";
+
+const tmpDirMalformed = mkdtempSyncMalformed(joinMalformed(tmpdirMalformed(), "papertest-"));
+const malformedFile = joinMalformed(tmpDirMalformed, "malformed.md");
+writeFileSyncMalformed(malformedFile, "Some text [3](doi:10.1016/j.devcel.2015.03.001; and more text.", "utf-8");
+const r1 = finalizeDoc(malformedFile);
+assert(r1.bibliographyCount === 1, `Malformed DOI: caught by defensive regex (got ${r1.bibliographyCount})`);
+rmSyncMalformed(tmpDirMalformed, { recursive: true });
