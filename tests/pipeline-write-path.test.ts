@@ -36,9 +36,9 @@ test("resolveDefaultOutPath: same description twice goes to the same file", () =
 
 test("resolveDefaultOutPath: default outputDir is <cwd>/paper-write-out/ when not specified", () => {
   const out = resolveDefaultOutPath("Write about cachexia");
-  // Match the path tail (works on both Windows and POSIX separators).
-  // The slug is "write-about-cachexia" (the first 3 tokens ≥ 3 chars).
-  assert.ok(out.endsWith("paper-write-out" + pathSep + "write-about-cachexia.md"), `out=${out}`);
+  // With stop-word filter: "write" and "about" are filtered out.
+  // Only "cachexia" remains.
+  assert.ok(out.endsWith("paper-write-out" + pathSep + "cachexia.md"), `out=${out}`);
 });
 
 test("resolveDefaultOutPath: slug strips punctuation and limits to 5 tokens", () => {

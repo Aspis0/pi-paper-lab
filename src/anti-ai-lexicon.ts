@@ -629,10 +629,14 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
   }
 
   // Filler adverbs (silent deletion of adverb + adjacent comma)
+  // v0.7.0-alpha.11 Bug 1 fix: "rather than" is a standard comparative
+  // construction, NOT a filler adverb. Add negative lookahead so
+  // rather is NOT deleted when followed by "than".
   for (const a of lex.fillerAdverbs) {
     if (!a) continue;
+    const lookAhead = a.toLowerCase() === "rather" ? "(?![\\s]+than)" : "";
     const re = new RegExp(
-      `(,\\s*)?\\b${escapeForRegex(a)}\\b(\\s*,)?`,
+      `(,\\s*)?\\b${escapeForRegex(a)}\\b${lookAhead}(\\s*,)?`,
       "gi",
     );
     const matches: RegExpExecArray[] = [];

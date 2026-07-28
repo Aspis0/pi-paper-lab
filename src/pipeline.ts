@@ -8,7 +8,7 @@
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import { loadConfig } from "./config.ts";
 import { fileURLToPath } from "node:url";
@@ -247,37 +247,47 @@ export async function pipelineRewrite(
 // === Pipeline 3: /paper-write ===
 
 /**
- * Derive a filesystem-safe filename slug from a free-form description.
- * Used as the default outPath so two pipelineWrite calls with different
- * descriptions produce different files without the LLM having to pass
- * --output. Takes the first 5 alphanumeric tokens, lowercases, and
- * joins with hyphens. Falls back to "paper" if no usable token is found.
- *
- * Examples:
- *   "Write an intro section about cachexia" -> "write-an-intro-section"
- *   "Methods: Drosophila cachexia model"      -> "methods-drosophila-cachexia"
- *   "!!!"                                    -> "paper"
- */
-/**
- * Public helper for the tests: the default outPath derivation
- * pipelineWrite uses internally. Exposed so the auto-slug behaviour
- * is testable without needing a live pi ExtensionAPI mock.
+ * Resolve the default output path for pipelineWrite.
+ * M4 audit HIGH-1/HIGH-3: structural words ("write", "the", "section", ...)
+ * are filtered so the slug reflects CONTENT, not prompt scaffolding.
+ * Falls back to "paper.md" if no usable token. When outputPath is relative,
+ * it's joined with outputDir (not resolved against cwd).
+ * Exported for testing.
  */
 export function resolveDefaultOutPath(
   description: string,
   opts: { outputDir?: string; outputPath?: string } = {},
 ): string {
   const outputDir = opts.outputDir ?? join(process.cwd(), "paper-write-out");
-  if (opts.outputPath) return opts.outputPath;
+  // MED-1 fix: if outputPath is relative, join with outputDir instead of
+  // silently resolving against cwd (which ignores outputDir entirely).
+  if (opts.outputPath) {
+    return isAbsolute(opts.outputPath) ? opts.outputPath : join(outputDir, opts.outputPath);
+  }
   return join(outputDir, `${slugifyDescription(description)}.md`);
 }
+
+// Stop words for the filename slug. These structural/grammatical words
+// must NOT appear in the slug because they do not identify content and
+// cause collisions (e.g. "Write methods about X" vs "Write results about Y"
+// would both map to "write-about" → same file).
+const SLUG_STOP_WORDS = new Set([
+  "the", "and", "for", "about", "with", "that", "this", "from",
+  "your", "have", "into", "over", "than", "their", "there", "which",
+  "section", "introduction", "paragraph", "topic", "paper", "essay",
+  "comprehensive", "detailed", "long", "short", "new", "some", "more",
+  "also", "will", "can", "use", "make", "need", "want", "please", "text",
+  "generate", "create", "produce", "draft", "part", "here", "describe",
+  "following", "below", "after", "before", "while", "when", "where",
+  "write", "write.", "an", "a", "of",
+]);
 
 function slugifyDescription(description: string): string {
   const tokens = description
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
     .split(/[\s-]+/)
-    .filter((w) => w.length >= 3)
+    .filter((w) => w.length >= 3 && !SLUG_STOP_WORDS.has(w))
     .slice(0, 5);
   if (tokens.length === 0) return "paper";
   return tokens.join("-");

@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.7.0-alpha.11 — Bug fixes: rather-than, AI detector, pipeline-write audit
+
+Critical bug fixes and calibration improvements based on audit feedback.
+
+### Fixed
+
+- **Bug 1: `silent_rewrite` destroys "rather than"** (CRITICAL)
+  - `silentRewrite()` was deleting "rather" even when followed by "than",
+    breaking the comparative construction "X rather than Y"
+  - Added negative lookahead `(?!\s+than)` to the filler adverb regex
+  - Now preserves "rather than" while still removing standalone "rather" as filler
+  - File: `src/anti-ai-lexicon.ts`, Test: `tests/rather-than-preservation.test.ts`
+
+- **Bug 2: AI detector features don't fire for short scientific paragraphs** (HIGH)
+  - 5 of 8 statistical features were always returning ~0 for scientific text
+    (100-300 words) due to calibration on 500+ word texts
+  - Implemented length-adaptive calibration: features now check word count
+    and use appropriate baselines for short scientific paragraphs vs long texts
+  - Adjusted baselines: CV (burstiness) 0.22/0.35, entropy 7.0/5.0, TTR 0.85/0.60
+  - Sentence starter diversity only fires for texts >10 sentences (neutral 0.5 for short)
+  - File: `src/statistical-ai-detector.ts`, Test: `tests/statistical-detector-calibration.test.ts`
+
+- **Pipeline-write audit HIGH-1/HIGH-3: stop-word filter for slug generation** (HIGH)
+  - Default filenames were colliding for different paper sections because
+    structural words like "the", "about", "for" consumed all 5 slug tokens
+  - Added `SLUG_STOP_WORDS` filter (60+ words) so content words survive
+  - File: `src/pipeline.ts`
+
+- **Pipeline-write audit MED-1: relative outputPath handling** (MEDIUM)
+  - When a relative path was passed to `outputPath`, it was resolved against
+    cwd instead of `outputDir`, breaking the output directory logic
+  - Added `isAbsolute()` check to resolve relative paths against `outputDir`
+  - File: `src/pipeline.ts`
+
+### Tests
+
+- `tests/rather-than-preservation.test.ts`: 5 tests
+- `tests/statistical-detector-calibration.test.ts`: 6 tests
+- All 173 tests passing
+
+---
+
+## v0.7.0-alpha.10 — M4 audit fixes (4 CRIT + 5 HIGH + 3 MED)
+
+Aggressive bug-fix pass on M4 (Word-native citation builder). All findings
+from the hostile audit at `C:/tmp/audit-m4.md` addressed.
+
+### Fixed
+
+- **CRIT-1**: rewriteDocumentXml regex now requires `rPr` block to contain
+  `<w:vertAlign w:val="superscript"/>` (removed `?` making it optional)
+- **CRIT-2**: BIBLIOGRAPHY SDT no longer duplicated on re-run (guard check)
+- **CRIT-3**: Vancouver parser now separates issue from volume
+  (`15(4)` → vol=15, issue=4)
+- **CRIT-4**: Placeholder entries without DOI are captured (no bibliography gaps)
+- **HIGH-1**: GUID now hashed from DOI/title (not `{id}-0000-...`)
+- **HIGH-2**: SDT IDs unique per document (correlates with CRIT-2)
+- **HIGH-3**: `escapeXml` strips XML-illegal control characters
+- **HIGH-4**: 9 new integration tests for Vancouver parser
+- **HIGH-5**: `parseInt` NaN guard in live source parser
+- **MED-1/2**: Verified working (DOI with parens, et al.)
+- **MED-3**: Issue captured separately (correlates with CRIT-3)
+- **MED-4**: Dynamic require kept sync (deliberate design choice)
+
+### Tests
+
+- `tests/vancouver-parser-regressions.test.ts`: 9 tests
+- `tests/word-live-builder.test.ts`: 20 tests (was 14, +6 for M4 fixes)
+- All 167 tests passing (before alpha.11)
+
+---
+
 ## v0.7.0-alpha.9 — pipelineWrite default path is auto-derived (no silent clobber)
 
 The default outPath for pipelineWrite is now derived from the
