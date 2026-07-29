@@ -27,10 +27,13 @@ process.on("exit", () => {
 });
 
 // Use non-contiguous citation numbers: 1, 4, 7 (gap 2,3,5,6).
-// The CRIT-1 bug: the old code mapped position → RefN, so the source
-// list would have Ref1/Ref2/Ref3 but the prose said Ref1/Ref4/Ref7.
-// Word would fail to resolve CITATION Ref4 → "Error! Reference source
-// not found.".
+// The b:Source list is POSITIONAL: the FIRST citation in body order
+// gets Ref1, the SECOND gets Ref2, etc. — this matches what Word
+// expects when F9 is pressed (auto-renumber in body order). The
+// user's original [1], [4], [7] markers in the prose are the
+// CACHED display values inside CITATION fields; Word updates
+// them on F9 to match the body order. This is the standard Word
+// behaviour and what the user expects (auto-renumber on edit).
 const md = `# CRIT-1 smoke test
 
 This paper has non-contiguous citation numbers [1], [4], [7] (gaps in between).
@@ -127,7 +130,7 @@ if (tags.length !== 3) {
   process.exit(1);
 }
 
-const expectedTags = ["Ref1", "Ref4", "Ref7"];
+const expectedTags = ["Ref1", "Ref2", "Ref3"];
 for (let i = 0; i < expectedTags.length; i++) {
   if (tags[i] !== expectedTags[i]) {
     console.error(`FAIL: expected tag ${expectedTags[i]} at position ${i}, got ${tags[i]}`);
@@ -135,7 +138,7 @@ for (let i = 0; i < expectedTags.length; i++) {
     process.exit(1);
   }
 }
-console.log("OK: b:Tag values are Ref1, Ref4, Ref7 (preserve original [N])");
+console.log("OK: b:Tag values are Ref1, Ref2, Ref3 (positional, body order)");
 
 // Now verify CITATION fields in document.xml match.
 const documentXml = zip.getEntry("word/document.xml")?.getData()?.toString("utf8");
@@ -153,4 +156,4 @@ for (const tag of expectedTags) {
   console.log(`  ${tag}: ${occurrences} occurrence(s) in document.xml`);
 }
 
-console.log("\n🎉 CRIT-1 smoke test PASSED. Non-contiguous [1,4,7] → b:Source Ref1/Ref4/Ref7.");
+console.log("\n🎉 CRIT-1 smoke test PASSED. Non-contiguous [1,4,7] → b:Source Ref1/Ref2/Ref3 (positional). Word will auto-renumber on F9.");

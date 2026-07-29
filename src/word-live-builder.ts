@@ -285,7 +285,10 @@ function buildBibliographySdt(visibleText: string = "(Update Field to render)"):
  * CITATION SDT, and append a BIBLIOGRAPHY SDT at the end of the body
  * (just before `</w:body>`). Returns the modified document.xml.
  */
-export function rewriteDocumentXml(docXml: string): string {
+export function rewriteDocumentXml(
+  docXml: string,
+  originalToPositional?: Map<number, number>,
+): string {
   // CRIT-1 fix (M4 audit): the rPr block containing <w:vertAlign
   // w:val="superscript"/> is now MANDATORY (the previous `?` made
   // the whole rPr block optional, which let the regex match plain
@@ -293,8 +296,17 @@ export function rewriteDocumentXml(docXml: string): string {
   // We still allow other elements inside <w:rPr> (e.g. <w:rStyle/>,
   // <w:lang/>).
   let out = docXml;
-  const supRunRe = /<w:r\b[^>]*><w:rPr>(?:[^<]|<(?!w:t\b)[^<]*)*<w:vertAlign w:val="superscript"\/>(?:[^<]|<(?!w:t\b)[^<]*)*<\/w:rPr>\s*<w:t[^>]*>\[(\d+)\]<\/w:t>\s*<\/w:r>/g;
-  out = out.replace(supRunRe, (_m, n) => buildCitationSdt(parseInt(n, 10), `[${n}]`));
+  const supRunRe = /<w:r\b[^>]*><w:rPr>(?:[^<]|<(?!w:t\b)[^<])*<w:vertAlign w:val="superscript"\/>(?:[^<]|<(?!w:t\b)[^<])*<\/w:rPr>\s*<w:t[^>]*>\[(\d+)\]<\/w:t>\s*<\/w:r>/g;
+  out = out.replace(supRunRe, (_m, n) => {
+    const orig = parseInt(n, 10);
+    // If we have a mapping (e.g. [4] -> positional 2), use the
+    // positional id. Word's CITATION field CITATION Ref<positional>
+    // resolves to b:Source Ref<positional>. This is how we get
+    // auto-renumbering: the user can delete any citation and Word
+    // will renumber the rest in body order.
+    const pos = originalToPositional?.get(orig) ?? orig;
+    return buildCitationSdt(pos, `[${orig}]`);
+  });
 
   // CRIT-2 fix (M4 audit): only append the BIBLIOGRAPHY SDT if one
   // is not already present. Without this guard, every call to
@@ -340,7 +352,7 @@ export function patchDocumentRelsXml(relsXml: string): string {
 export function buildWordLive(
   docxPath: string,
   sources: WordLiveBuilderSource[],
-  opts: BuildLiveOpts = {},
+  opts: BuildLiveOpts & { originalToPositional?: Map<number, number> } = {},
 ): void {
   const zip = new AdmZip(docxPath);
   // 1. customXml/item1.xml
@@ -363,7 +375,7 @@ export function buildWordLive(
   const docEntry = zip.getEntry("word/document.xml");
   if (!docEntry) throw new Error(`word/document.xml not found in ${docxPath}`);
   const doc = docEntry.getData().toString("utf-8");
-  zip.updateFile(docEntry, Buffer.from(rewriteDocumentXml(doc), "utf-8"));
+  zip.updateFile(docEntry, Buffer.from(rewriteDocumentXml(doc, opts.originalToPositional), "utf-8"));
   // Write back.
   zip.writeZip(docxPath);
 }

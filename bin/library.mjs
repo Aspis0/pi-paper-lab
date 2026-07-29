@@ -168,8 +168,12 @@ async function cmdAddFromSearch(lib, query) {
     return { family: name.slice(lastSpace + 1), given: name.slice(0, lastSpace) };
   });
   const year = top.publication_year ?? null;
-  const cslFallback = {
-    id: top.doi ? top.doi.replace(/\//g, "__").replace(/[^a-z0-9.\-]+/gi, "_") : `openalex-${top.id ?? "unknown"}`,
+  // REGR-1 fix: use the canonical doiToId helper instead of an inline
+  // ad-hoc regex. The previous code did NOT lowercase the DOI, which
+  // meant that a `cmdAdd` after a CrossRef recovery produced a
+  // different id (lowercased) and a duplicate library entry.
+    const cslFallback = {
+    id: top.doi ? doiToId(top.doi) : `openalex-${top.id ?? "unknown"}`,
     type: "article-journal",
     title: top.title ?? "(untitled)",
     author: authors,

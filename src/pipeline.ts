@@ -29,7 +29,8 @@ import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER,
 import { classifyFindings, formatClarifyPrompt, serialiseClarifications, type ClarifyItem } from "./clarify.ts";
 import { lookupDoi, type CrossRefWork } from "./crossref.ts";
 import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
-import { cslItemToWordSource } from "./word-live-builder.ts";
+import { formatBibliography as formatCslBibliography } from "./csl/formatBibliography.ts";
+import { cslItemsToWordSources } from "./word-live-builder.ts";
 import type { CslItem } from "./csl/schema.ts";
 import { detectAI, detectRewriteLoop, formatDetectionReport, type AIDetectionResult } from "./ai-detector.ts";
 import { buildWordLive, type WordLiveBuilderSource } from "./word-live-builder.ts";
@@ -86,7 +87,18 @@ function cleanExtractedDocx(text: string): string {
     const refLines = refsText.split(/\n\n+/);
     for (const line of refLines) {
       const numMatch = line.match(/^\s*(\d+)\.\s/);
-      const doiMatch = line.match(/doi:(10\.[^\s\n]+)/i);
+      // Match angle-bracket form first (handles parens correctly).
+      const angleMatch = line.match(/<doi:\s*([\w./\-()]+?)\s*>/i);
+      let doiMatch = null;
+      if (angleMatch) {
+        doiMatch = angleMatch[1].replace(/[\s,;.<>]+$/, "");
+      } else {
+        // Plain form `[N](doi:10.x/...)` — documented limitation: parens
+        // in DOI are truncated at the first `)`. We match until the
+        // first whitespace, `)`, `]`, or end-of-string.
+        const plainMatch = line.match(/doi:\s*([^\s)\]]+)/i);
+        doiMatch = plainMatch ? plainMatch[1] : null;
+      }
       if (numMatch && doiMatch) {
         doiMap.set(parseInt(numMatch[1]), doiMatch[1]);
       }
@@ -798,18 +810,18 @@ export function finalizeDoc(
     try {
       const work = resolveDoi(doi);
       if (work) {
-        const authors = (work.author ?? []).map((a: any) =>
-          a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ");
-        const year = work.published?.["date-parts"]?.[0]?.[0]
-          ?? work["published-print"]?.["date-parts"]?.[0]?.[0]
-          ?? work["published-online"]?.["date-parts"]?.[0]?.[0] ?? "?";
-        const title = work.title?.[0] ?? "(untitled)";
-        const journal = work["container-title"]?.[0] ?? "";
-        const vol = work.volume ?? "";
-        const pages = work.page ?? "";
-        citations.set(num, `${num}. ${authors}. ${title}. ${journal}. ${year}${vol ? ";" + vol : ""}${pages ? ":" + pages : ""}. doi:${doi}`);
-        // M2: also populate CSL-JSON for the live-citation path.
-        cslItems.set(num, crossrefToCsl(work, doi));
+        // M2 + CRIT-1 (v0.7.5 audit): use Citestyle to render the
+        // bibliography entry (no `[N]` prefix — we add the original
+        // number ourselves at markdown-write time so non-contiguous
+        // citations like [1], [4], [7] preserve their numbers).
+        const csl = crossrefToCsl(work, doi);
+        cslItems.set(num, csl);
+        const rendered = formatCslBibliography([csl], { style: "vancouver" });
+        // Strip Citestyle's leading "[N] " — we re-apply the original
+        // [N] in the markdown writer (line 953) with a backslash-escaped
+        // period so bun-docx doesn't interpret it as a numbered list.
+        const withoutNumber = rendered.replace(/^\[\d+\]\s+/, "");
+        citations.set(num, withoutNumber);
       } else {
         citations.set(num, `${num}. (doi:${doi})`);
       }
@@ -934,11 +946,13 @@ export function finalizeDoc(
     },
   );
 
-  // 3. Append References section (DOI only here, never in text)
-  if (citations.size > 0) {
-    const refs = [...citations.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c).join("\n\n");
-    text += `\n\n---\n\n## References\n\n${refs}\n`;
-  }
+  // 3. (no static References section — Word's BIBLIOGRAPHY field,
+  //    injected by buildWordLive via the live branch, is the single
+  //    source of truth for the bibliography. A static section would
+  //    duplicate/conflict with the field and break auto-renumbering
+  //    on Ctrl+A, F9. The "References" heading is also omitted for
+  //    the same reason — the BIBLIOGRAPHY SDT provides its own
+  //    "Bibliography" heading.)
 
   // v0.7.0 (M2.2): QUESTIONS FOR THE AUTHOR section at the top of the doc.
   // The LLM emitted [ASK:question] markers while writing; collect them
@@ -1012,17 +1026,20 @@ export function finalizeDoc(
     const cachePath = sidecarPathFor(markdownPath);
     const entries: Record<string, SidecarEntry> = {};
     for (const [num, vancouver] of citations.entries()) {
-      // Try to extract the DOI back out of the Vancouver string for the cache.
-      // Schema: the Vancouver entry includes "doi:10.xxxx" (resolved) or
-      // the placeholder text (unresolved).
-      const doiMatch = vancouver.match(/doi:(10\.[^\s\n]+)/);
+      // Try to extract the DOI back out of the citation text for the cache.
+      // Schema: the resolved text has "doi:10.xxxx" (old regex path) OR
+      // "https://doi.org/10.xxxx" (Citestyle path). Both are accepted.
+      // We use [\w./\-()]+ (allowing internal parens, used by older
+      // Elsevier DOIs) and trim trailing terminator chars afterwards.
+      const rawDoiMatch = vancouver.match(/(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)([\w./\-()]+)/i);
+      const doiMatch = rawDoiMatch ? rawDoiMatch[1].replace(/[\s,;.<>]+$/, "") : null;
       // CRIT-2 fix: also write the CSL-JSON sidecar. Without this, the
       // next finalizeDoc run loads {doi, vancouver} only and the live
       // builder falls back to the regex Vancouver parser (because
       // cslItems stays empty). The CSL field is the v0.7.5 promise.
       const csl = cslItems.get(num);
       entries[String(num)] = {
-        doi: doiMatch ? doiMatch[1] : null,
+        doi: doiMatch ? doiMatch : null,
         vancouver,
         csl: csl ?? undefined,
       };
@@ -1065,20 +1082,30 @@ export function finalizeDoc(
       // regex entirely.
       const liveSources: WordLiveBuilderSource[] = [];
       if (cslItems.size > 0) {
-        // Preferred: structured CslItem → WordLiveBuilderSource. No
-        // regex, no parser bugs. CRIT-1 fix: we preserve the original
-        // citation number (the [N] from `<sup>[N]</sup>` in the prose)
-        // and pass it as the numeric id to buildWordLive. Previously
-        // we re-assigned 1..N by position, which broke non-contiguous
-        // citations like [2, 5, 7] — Word's CITATION SDT would say
-        // `Ref5` but the source list had `Ref2`, producing
-        // "Error! Reference source not found."
+        // Preferred: structured CslItem → WordLiveBuilderSource. We
+        // re-assign 1..N by position so the b:Source list has
+        // contiguous Ref1, Ref2, Ref3, ... — this matches what
+        // Word expects from a CITATION field. Word's renumbering
+        // (Ctrl+A, F9) will then re-number the bibliography in
+        // b:Source order, which is the user-visible flow.
+        //
+        // We build a `originalToPositional` map so that the
+        // <sup>[N]</sup> markers in the prose (which carry the
+        // USER's original numbers like 1, 4, 7) get remapped to
+        // the positional ids in the CITATION fields. This way
+        // CITATION Ref4 in the prose (position 2) becomes
+        // CITATION Ref2, which resolves to the correct b:Source.
         const orderedItems = [...cslItems.entries()].sort(
           (a, b) => a[0] - b[0],
         );
-        for (const [num, csl] of orderedItems) {
-          liveSources.push(cslItemToWordSource(csl, num));
-        }
+        const csls = orderedItems.map(([, csl]) => csl);
+        const originalToPositional = new Map<number, number>();
+        orderedItems.forEach(([orig], i) => {
+          originalToPositional.set(orig, i + 1);
+        });
+        liveSources.push(...cslItemsToWordSources(csls));
+        // Stash the map for the buildWordLive call below.
+        (buildWordLive as any)._lastMap = originalToPositional;
       } else {
         // Fallback: legacy Vancouver-string parser. Only used when
         // cslItems is empty (old sidecar, no inline DOIs). M5 cleanup
@@ -1091,7 +1118,19 @@ export function finalizeDoc(
           // them, so the user has a paper trail.
         }
       }
-      buildWordLive(docxPath, liveSources, { style: "ieee" });
+      // If the CslItem path populated a map, pass it to buildWordLive
+      // so the CITATION field rewriter can remap the user's original
+      // [N] markers (e.g. 1, 4, 7) to positional ids (1, 2, 3).
+      const buildOpts: any = { style: "ieee" };
+      const lastMap = (buildWordLive as any)._lastMap as
+        | Map<number, number>
+        | undefined;
+      if (lastMap) {
+        buildOpts.originalToPositional = lastMap;
+        // Clear so a fallback path doesn't accidentally use it.
+        (buildWordLive as any)._lastMap = undefined;
+      }
+      buildWordLive(docxPath, liveSources, buildOpts);
     } catch (err: any) {
       console.error("[paper-lab-finalize] WARN: --live build failed, falling back to static:", err?.message ?? err);
     }
