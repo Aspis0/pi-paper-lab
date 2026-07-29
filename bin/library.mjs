@@ -149,10 +149,39 @@ async function cmdAddFromSearch(lib, query) {
     process.exitCode = 3;
     return null;
   }
-  // OpenAlex `top` already has CSL-ish fields; we re-fetch via CrossRef
-  // for canonical metadata. If CrossRef fails, fall back to OpenAlex's
-  // own reconstructed CSL.
-  return cmdAdd(lib, top.doi);
+  // HIGH-3 fix: try CrossRef first (canonical metadata), and if that
+  // fails, fall back to OpenAlex's reconstructed CSL. The OpenAlex
+  // response has title, authorships[], publication_date, primary_location
+  // etc. — we map the relevant fields into our CslItem shape.
+  const crResult = await cmdAdd(lib, top.doi);
+  if (crResult) return crResult;
+  // CrossRef failed. Build a CslItem from OpenAlex's response.
+  process.stderr.write(`CrossRef failed for ${top.doi}, falling back to OpenAlex metadata.\n`);
+  const authorships = top.authorships ?? [];
+  const authors = authorships.map((a) => {
+    const name = a.author?.display_name ?? "?";
+    // OpenAlex returns a single string like "Ying Liu". We split on
+    // the LAST space and treat the second half as the family name.
+    // This is imperfect but better than dropping the author entirely.
+    const lastSpace = name.lastIndexOf(" ");
+    if (lastSpace < 0) return { family: name };
+    return { family: name.slice(lastSpace + 1), given: name.slice(0, lastSpace) };
+  });
+  const year = top.publication_year ?? null;
+  const cslFallback = {
+    id: top.doi ? top.doi.replace(/\//g, "__").replace(/[^a-z0-9.\-]+/gi, "_") : `openalex-${top.id ?? "unknown"}`,
+    type: "article-journal",
+    title: top.title ?? "(untitled)",
+    author: authors,
+    "container-title": top.primary_location?.source?.display_name ?? "",
+    issued: year ? { "date-parts": [[year]] } : undefined,
+    DOI: top.doi ?? undefined,
+    URL: top.doi ? `https://doi.org/${top.doi}` : (top.id ? `https://openalex.org/${top.id}` : undefined),
+    source: "openalex",
+  };
+  lib.add(cslFallback);
+  process.stdout.write(`Added (OpenAlex fallback) ${cslFallback.id}: ${cslFallback.title}\n`);
+  return cslFallback;
 }
 
 async function cmdImport(lib, filePath) {
@@ -195,10 +224,18 @@ async function cmdImport(lib, filePath) {
     const { Cite } = await import("@citation-js/core");
     await import("@citation-js/plugin-bibtex");
     const cite = new Cite(raw);
-    const items = (cite.data ?? []).map((it) => ({
-      ...it,
-      id: it.id ?? doiToId(it.DOI ?? ""),
-    }));
+    // CRIT-5 fix: Citation.js stores DOI as an array `["10.xxx/yyy"]`,
+    // not a string. Calling `doiToId(arr)` would crash because
+    // arrays don't have `.toLowerCase()`. We normalize to first DOI
+    // (or empty string if no DOI). The same logic applies to RIS.
+    const items = (cite.data ?? []).map((it) => {
+      const doi = Array.isArray(it.DOI) ? it.DOI[0] : (it.DOI ?? "");
+      return {
+        ...it,
+        DOI: doi,
+        id: it.id ?? doiToId(doi),
+      };
+    });
     for (const item of items) lib.add(item);
     process.stdout.write(`Imported ${items.length} BibTeX entries.\n`);
     return;
@@ -207,10 +244,14 @@ async function cmdImport(lib, filePath) {
     const { Cite } = await import("@citation-js/core");
     await import("@citation-js/plugin-ris");
     const cite = new Cite(raw);
-    const items = (cite.data ?? []).map((it) => ({
-      ...it,
-      id: it.id ?? doiToId(it.DOI ?? ""),
-    }));
+    const items = (cite.data ?? []).map((it) => {
+      const doi = Array.isArray(it.DOI) ? it.DOI[0] : (it.DOI ?? "");
+      return {
+        ...it,
+        DOI: doi,
+        id: it.id ?? doiToId(doi),
+      };
+    });
     for (const item of items) lib.add(item);
     process.stdout.write(`Imported ${items.length} RIS entries.\n`);
     return;
@@ -223,8 +264,23 @@ async function cmdImport(lib, filePath) {
 function cmdList(lib, flags) {
   const papers = lib.list();
   const domain = flags.domain;
+  // CRIT-4 fix: the old filter (JSON.stringify(authors).includes(domain))
+  // was parody code — it matched against the author array's JSON, not
+  // the domain. Now we match against title + container-title + abstract
+  // (lowercased) which is at least semantically correct: the user is
+  // searching for a topic keyword, not a name. Domain-specific papers
+  // (e.g. Drosophila) will mention the species in title/abstract.
   const filtered = domain
-    ? papers.filter((p) => JSON.stringify(p.author ?? []).toLowerCase().includes(domain.toLowerCase()))
+    ? papers.filter((p) => {
+        const haystack = [
+          p.title ?? "",
+          p["container-title"] ?? "",
+          p.abstract ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(domain.toLowerCase());
+      })
     : papers;
   for (const p of filtered) {
     const year = p.issued?.["date-parts"]?.[0]?.[0] ?? "?";

@@ -27,9 +27,9 @@ if (!process.env.PATH?.includes("local/bin") && !process.env.PATH?.includes("hom
 import { loadLexicon, silentRewrite, scoreText } from "./anti-ai-lexicon.ts";
 import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER, CITE_WITH_DOI } from "./citations.ts";
 import { classifyFindings, formatClarifyPrompt, serialiseClarifications, type ClarifyItem } from "./clarify.ts";
-import { lookupDoi, formatVancouver, type CrossRefWork } from "./crossref.ts";
+import { lookupDoi, type CrossRefWork } from "./crossref.ts";
 import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
-import { cslItemsToWordSources } from "./word-live-builder.ts";
+import { cslItemToWordSource } from "./word-live-builder.ts";
 import type { CslItem } from "./csl/schema.ts";
 import { detectAI, detectRewriteLoop, formatDetectionReport, type AIDetectionResult } from "./ai-detector.ts";
 import { buildWordLive, type WordLiveBuilderSource } from "./word-live-builder.ts";
@@ -762,6 +762,12 @@ export function finalizeDoc(
   if (trustCache) {
     for (const [num, entry] of sidecar.entries()) {
       citations.set(num, entry.vancouver);
+      // CRIT-2 fix: also seed cslItems from the sidecar's csl field.
+      // Without this, re-runs of finalizeDoc always fall back to
+      // the regex Vancouver parser (cslItems.size === 0).
+      if (entry.csl) {
+        cslItems.set(num, entry.csl);
+      }
     }
   }
 
@@ -1010,9 +1016,15 @@ export function finalizeDoc(
       // Schema: the Vancouver entry includes "doi:10.xxxx" (resolved) or
       // the placeholder text (unresolved).
       const doiMatch = vancouver.match(/doi:(10\.[^\s\n]+)/);
+      // CRIT-2 fix: also write the CSL-JSON sidecar. Without this, the
+      // next finalizeDoc run loads {doi, vancouver} only and the live
+      // builder falls back to the regex Vancouver parser (because
+      // cslItems stays empty). The CSL field is the v0.7.5 promise.
+      const csl = cslItems.get(num);
       entries[String(num)] = {
         doi: doiMatch ? doiMatch[1] : null,
         vancouver,
+        csl: csl ?? undefined,
       };
     }
     const sidecar: SidecarFile = {
@@ -1054,12 +1066,19 @@ export function finalizeDoc(
       const liveSources: WordLiveBuilderSource[] = [];
       if (cslItems.size > 0) {
         // Preferred: structured CslItem → WordLiveBuilderSource. No
-        // regex, no parser bugs. Citation numbers assigned in
-        // insertion order (1, 2, 3, ...).
-        const orderedItems = [...cslItems.entries()]
-          .sort((a, b) => a[0] - b[0])
-          .map(([, csl]) => csl);
-        liveSources.push(...cslItemsToWordSources(orderedItems));
+        // regex, no parser bugs. CRIT-1 fix: we preserve the original
+        // citation number (the [N] from `<sup>[N]</sup>` in the prose)
+        // and pass it as the numeric id to buildWordLive. Previously
+        // we re-assigned 1..N by position, which broke non-contiguous
+        // citations like [2, 5, 7] — Word's CITATION SDT would say
+        // `Ref5` but the source list had `Ref2`, producing
+        // "Error! Reference source not found."
+        const orderedItems = [...cslItems.entries()].sort(
+          (a, b) => a[0] - b[0],
+        );
+        for (const [num, csl] of orderedItems) {
+          liveSources.push(cslItemToWordSource(csl, num));
+        }
       } else {
         // Fallback: legacy Vancouver-string parser. Only used when
         // cslItems is empty (old sidecar, no inline DOIs). M5 cleanup
@@ -1141,7 +1160,14 @@ function loadCitationSidecar(markdownPath: string): Map<number, SidecarEntry> {
     const num = parseInt(numStr);
     if (!isFinite(num) || num < 1 || num >= 1000) continue;
     if (!entry || typeof entry.vancouver !== "string") continue;
-    out.set(num, { doi: entry.doi ?? null, vancouver: entry.vancouver });
+    // CRIT-2 fix: also load CSL-JSON if present (written by a previous
+    // v0.7.5 run). Without this, the live builder's cslItems Map is
+    // empty on every re-run and we fall back to the regex parser.
+    out.set(num, {
+      doi: entry.doi ?? null,
+      vancouver: entry.vancouver,
+      csl: (entry as any).csl as CslItem | undefined,
+    });
   }
   return out;
 }
@@ -1260,19 +1286,37 @@ function parseInlineBibliography(text: string): Record<number, string> {
   return map;
 }
 
-// Synchronous CrossRef DOI lookup (uses child_process to call node)
+// Synchronous CrossRef DOI lookup.
+//
+// CRIT-3 fix: previously this used `execFileSync("curl", ...)` which
+// is dead on Windows (no `curl` binary, or different name/flags). We
+// now spawn `node -e <script>` and use the built-in `fetch` (Node 18+).
+// This works on macOS, Linux, and Windows identically.
 function lookupDoiSync(doi: string): any | null {
   const cleanDoiUrl = cleanDoi(doi.replace(/^https?:\/\/doi\.org\//i, ""));
   const url = `https://api.crossref.org/works/${encodeURIComponent(cleanDoiUrl)}`;
+  // The script is a string literal that gets `eval`'d by `node -e`. We
+  // pass the URL as an argv slot and read it via process.argv to avoid
+  // any shell-quoting issues (Windows cmd interprets `&`, `^`, etc.).
+  const script = `
+    (async () => {
+      try {
+        const url = process.argv[1];
+        const r = await fetch(url, { headers: { "User-Agent": "pi-paper-lab/0.7" } });
+        if (!r.ok) { process.stdout.write(""); process.exit(0); }
+        const data = await r.json();
+        process.stdout.write(JSON.stringify(data?.message ?? null));
+      } catch { process.stdout.write(""); }
+    })();
+  `;
   try {
-    // Use curl for synchronous HTTP request
-    const output = execFileSync("curl", ["-s", "-H", "User-Agent: pi-paper-lab/0.5", url], {
+    const output = execFileSync(process.execPath, ["-e", script, url], {
       stdio: "pipe",
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: 15000,
     });
-    const data = JSON.parse(output);
-    return data?.message ?? null;
+    if (!output) return null;
+    return JSON.parse(output);
   } catch {
     return null;
   }

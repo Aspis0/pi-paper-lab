@@ -54,17 +54,21 @@ Manager). Three citation styles ship: IEEE, Vancouver, APA.
 
 ### Breaking changes
 
-- **`formatVancouver()` removed.** All callers now use `formatBibliography()`
-  with the new CSL pipeline. The old function is no longer exported
-  but may exist as a deprecated internal symbol for one release
-  (will be deleted in v0.8).
-- **`parseVancouverForLive()` removed from the live branch.** The
-  live branch now reads `CslItem[]` directly. Sidecars without a
-  `csl` field still work (fallback path) but produce a warning.
+- **`formatVancouver()` removed from the live path.** The live builder
+  no longer calls it. The function is still defined in `src/crossref.ts`
+  for backward compatibility with old sidecars but is no longer
+  imported anywhere in the production code path. Will be fully
+  deleted in v0.8 once golden tests are re-captured from Citestyle.
+- **`parseVancouverForLive()` is a fallback only.** The live branch
+  prefers the CslItem → b:Source direct path. The regex parser is
+  used only when the sidecar has no `csl` field (pre-v0.7.5 sidecar).
+  Will be removed in v0.8.
 - **`--verify-all` is now required to migrate old sidecars.** Old
   sidecars carry only `{doi, vancouver}`. Running
   `paper-lab-finalize paper.md --verify-all` re-fetches every DOI
-  and writes the CSL field.
+  and writes the CSL field. v0.7.5 itself ALSO writes the `csl` field
+  on every run (CRIT-2 fix from the v0.7.5 release audit), so users
+  who already ran v0.7.5 once will have populated sidecars.
 
 ### Migration from v0.7.2
 

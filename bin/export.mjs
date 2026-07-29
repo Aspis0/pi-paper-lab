@@ -175,10 +175,10 @@ async function main() {
     process.exit(3);
   }
 
-  // Resolve DOIs in parallel. For offline use this would fail; the
-  // M4 library CLI will be the offline-first path. Here we require
-  // network because we have no local cache yet.
-  const items = await Promise.all(
+  // Resolve DOIs in parallel. HIGH-1 fix: use Promise.allSettled so
+  // one bad DOI doesn't kill the whole export. We collect successes
+  // and warn on failures (printed to stderr at the end).
+  const results = await Promise.allSettled(
     dois.map(async (doi) => {
       const url = `https://api.crossref.org/works/${encodeURIComponent(doi)}`;
       const res = await fetch(url, {
@@ -189,6 +189,19 @@ async function main() {
       return crossrefToCsl(data.message, doi);
     }),
   );
+  const items = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      items.push(r.value);
+    } else {
+      process.stderr.write(`paper-lab-export: ${r.reason?.message ?? r.reason}\n`);
+    }
+  }
+  if (items.length === 0) {
+    process.stderr.write(`paper-lab-export: all DOI lookups failed\n`);
+    process.exitCode = 4;
+    return;
+  }
 
   // Emit the requested format(s). The `all` format is a labelled bundle.
   let output = "";

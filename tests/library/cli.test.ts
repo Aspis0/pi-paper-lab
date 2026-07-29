@@ -108,6 +108,49 @@ test("CLI: list requires no args", () => {
   }
 });
 
+test("CRIT-4: --domain filters by title/abstract keyword, not author JSON", () => {
+  // Bug: the old filter was `JSON.stringify(p.author).includes(domain)`,
+  // which matched against the author array's JSON serialization. The
+  // user would run `paper-lab-library list --domain drosophila` and
+  // get 0 results even when the library has Drosophila papers.
+  // Fix: we now filter on title + container-title + abstract (lowercased).
+  const dir = makeProject();
+  try {
+    const f = join(dir, "refs.json");
+    writeFileSync(
+      f,
+      JSON.stringify([
+        {
+          id: "10.1242__cachexia",
+          type: "article-journal",
+          title: "Cancer cachexia in Drosophila melanogaster",
+          author: [{ family: "Liu", given: "Ying" }],
+          issued: { "date-parts": [[2022]] },
+          DOI: "10.1242/dmm.049298",
+          abstract: "Cachexia is a wasting syndrome in flies.",
+        },
+        {
+          id: "10.1038__caspase",
+          type: "article-journal",
+          title: "Caspase activation in mice",
+          author: [{ family: "Smith", given: "John" }],
+          issued: { "date-parts": [[2019]] },
+          DOI: "10.1038/caspase",
+          abstract: "Caspases drive programmed cell death in mammals.",
+        },
+      ]),
+    );
+    run(["import", f], dir);
+    // Filter for drosophila — should match the cachexia paper.
+    const r = run(["list", "--domain", "drosophila"], dir);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /Cancer cachexia/);
+    assert.ok(!r.stdout.includes("Caspase"), "mouse paper should NOT match drosophila filter");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("CLI: search without query exits 1", () => {
   const dir = makeProject();
   try {

@@ -131,7 +131,7 @@ function mapCrossRefType(t: string | undefined): CslItem["type"] {
  * to handle nested tags. If a tag has attributes we keep the inner
  * text only.
  */
-function stripJats(jats: string | undefined): string | undefined {
+export function stripJats(jats: string | undefined): string | undefined {
   if (!jats) return undefined;
   // Drop any <...> tag, keep inner text. Repeatedly apply to handle
   // nested tags like <jats:p>foo <jats:bold>bar</jats:bold> baz</jats:p>.
@@ -141,13 +141,23 @@ function stripJats(jats: string | undefined): string | undefined {
     prev = out;
     out = out.replace(/<[^>]+>/g, "");
   } while (out !== prev);
-  // Decode the four entities CrossRef uses most often. Other entities
-  // are uncommon in abstracts; if needed we can extend this list.
+  // Decode entities CrossRef uses most often. HIGH-4 fix: numeric
+  // hex entities like &#x2014; (em-dash) were previously DELETED, not
+  // decoded, corrupting abstracts. We now decode both decimal
+  // (`&#1234;`) and hex (`&#xABCD;`) forms.
   return out
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#x[a-f0-9]+;/gi, "")
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_m, code) => {
+      const n = parseInt(code, 10);
+      return Number.isFinite(n) ? String.fromCharCode(n) : _m;
+    })
+    .replace(/&#x([a-f0-9]+);/gi, (_m, code) => {
+      const n = parseInt(code, 16);
+      return Number.isFinite(n) ? String.fromCharCode(n) : _m;
+    })
     .trim();
 }
