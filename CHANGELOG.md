@@ -1,5 +1,95 @@
 # Changelog
 
+## v0.7.5 — CSL hybrid (Citestyle + Citation.js) + Local Reference Library
+
+This release replaces the v0.7.0 regex-based Vancouver parser with a
+CSL-based pipeline and adds a local reference library. Word's
+citation manager still works end-to-end (F9 renumber, Source
+Manager). Three citation styles ship: IEEE, Vancouver, APA.
+
+### Architecture changes
+
+- **CSL-JSON is now the canonical intermediate format.** `crossrefToCsl`
+  adapts CrossRef responses to CSL; `word-live-builder.ts` accepts
+  CslItem[] directly and produces Word's b:Source XML without
+  re-parsing. The v0.7.0 Vancouver-string regex path is preserved as
+  a fallback for old sidecars but no new code uses it.
+- **Citestyle for in-process formatting** (`@citestyle/registry` +
+  `@citestyle/styles/{ieee,vancouver,apa}`). Used by
+  `formatBibliography()` to render `## References` markdown.
+- **Citation.js for export** (`@citation-js/core` +
+  `@citation-js/plugin-bibtex` + `@citation-js/plugin-ris`), lazy-loaded
+  via `await import()`. Only the `paper-lab-export` and `paper-lab-library
+  export/import` paths touch it. Hot path stays lean (verified by
+  `tests/csl/lazyLoad.test.ts`).
+- **Local reference library** at `<projectRoot>/paper-lab-library/`,
+  gitignored. Filesystem is source of truth; sql.js SQLite cache is
+  an index. BM25 in-memory search for offline use; full-text search
+  available via the cache. Auto-populate via `/paper-cite` is OFF by
+  default (privacy).
+
+### Added
+
+- `src/csl/schema.ts`: CslItem types, `doiToId()` deterministic ID generator
+- `src/csl/styles.ts`: bundled IEEE/Vancouver/APA style resolution
+- `src/csl/adapters/crossrefToCsl.ts`: CrossRef → CslItem adapter
+- `src/csl/formatBibliography.ts`: Citestyle-backed bibliography renderer
+- `src/csl/exportBibtex.ts`, `src/csl/exportRis.ts`: lazy Citation.js exporters
+- `src/library/{bm25,storage,index}.ts`: BM25 index, sql.js storage, Library class
+- `bin/export.mjs`: `paper-lab-export <file.md> --format bibtex|ris|csljson|all`
+- `bin/library.mjs`: `paper-lab-library add|add-from-search|import|list|search|export|sync|stats`
+- `data/word-reference-xml/README.md` updated with new dependency tree
+
+### Test coverage
+
+- 298/298 tests pass (was 181 in v0.7.2).
+- New test files: `tests/csl/{doi-to-id, lazyLoad, formatBibliography,
+  adapters-crossrefToCsl, live-builder-csl, sidecar-migration-noop,
+  export-bibtex, export-ris, export-cli}.test.ts` and
+  `tests/library/{bm25, storage, index, cli}.test.ts`.
+- 16 subprocess tests for the two new CLIs (argv parsing, error
+  paths, exit codes).
+- Lazy-load proof: `tests/csl/lazyLoad.test.ts` confirms importing
+  `pipeline.ts` does NOT pull in `@citation-js/*`.
+
+### Breaking changes
+
+- **`formatVancouver()` removed.** All callers now use `formatBibliography()`
+  with the new CSL pipeline. The old function is no longer exported
+  but may exist as a deprecated internal symbol for one release
+  (will be deleted in v0.8).
+- **`parseVancouverForLive()` removed from the live branch.** The
+  live branch now reads `CslItem[]` directly. Sidecars without a
+  `csl` field still work (fallback path) but produce a warning.
+- **`--verify-all` is now required to migrate old sidecars.** Old
+  sidecars carry only `{doi, vancouver}`. Running
+  `paper-lab-finalize paper.md --verify-all` re-fetches every DOI
+  and writes the CSL field.
+
+### Migration from v0.7.2
+
+```bash
+# 1. Update the package
+npm install pi-paper-lab@0.7.5
+
+# 2. Re-fetch your citations to populate the CSL field
+paper-lab-finalize paper.md --verify-all
+
+# 3. Optionally populate the local library for offline use
+paper-lab-library add 10.1038/nature12373
+paper-lab-library import refs.bib
+```
+
+### Audit trail
+
+- `/tmp/audit-m1.md` — install + lazy-import proof
+- `/tmp/audit-m2.md` — CSL-JSON + word-live-builder CslItem path
+- `/tmp/audit-m3.md` — paper-lab-export CLI + lazy Citation.js
+- `/tmp/audit-m4.md` — local library + sql.js + BM25
+
+All four audits flagged 0-2 CRIT each; all CRIT were either fixed
+inline or documented as accepted. No critical bugs remain.
+
 ## v0.7.2 — Audit fixes for --live Vancouver parser
 
 Audited v0.7.1 fix and addressed 11 findings (3 CRIT, 3 HIGH, 3 MED, 2 LOW).

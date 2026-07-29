@@ -36,6 +36,78 @@
 //     `docx create` output and validate in tests.
 
 import AdmZip from "adm-zip";
+import type { CslItem } from "./csl/schema.ts";
+
+/**
+ * Convert a CslItem (from crossrefToCsl / OpenAlex / Europe PMC) into
+ * the WordLiveBuilderSource shape that buildWordLive has always consumed.
+ *
+ * This is the v0.7.5 replacement for the v0.7.0 regex parser that ran
+ * over the formatVancouver() string. With direct CslItem → b:Source
+ * mapping, the bug surface area documented in M4 (CRIT-3, CRIT-4,
+ * MED-1, MED-2, MED-3) disappears entirely — we never re-parse what
+ * we already have structured.
+ *
+ * Mapping table (CslItem → b:Source):
+ *
+ *   CslItem field                → WordLiveBuilderSource field
+ *   ────────────────────────────────────────────────────────────
+ *   id                            → tag (Ref{id}); numeric part → id
+ *   title                         → title
+ *   author[].family               → authors[].family
+ *   author[].given                → authors[].given
+ *   author[].literal              → authors[].family (with given="")
+ *   "container-title"             → journal
+ *   volume                        → volume
+ *   issue                         → issue
+ *   page                          → pages
+ *   issued["date-parts"][0][0]    → year
+ *   DOI                           → doi
+ *   URL                           → url
+ */
+export function cslItemToWordSource(
+  csl: CslItem,
+  numericId: number,
+): WordLiveBuilderSource {
+  // Citation-number N comes from the citation-order index, not from
+  // the CslItem id (which is a DOI hash). We extract the numeric id
+  // from the CslItem id's "10.1242__dmm.049298" form by trusting the
+  // caller's order — caller passes 1, 2, 3 as the N.
+  const tag = csl.id ? `Ref${numericId}` : `Ref${numericId}`;
+
+  // Map CSL author fields to WordLiveBuilderSource.authors. CSL authors
+  // can carry `literal` for institutional authors (e.g. "World Health
+  // Organization"); Word's b:Person wants Last/First, so we treat
+  // literal as family with empty given.
+  const authors = (csl.author ?? []).map((a) => ({
+    family: a.literal ?? a.family ?? "?",
+    given: a.literal ? "" : a.given,
+  }));
+
+  return {
+    id: numericId,
+    tag,
+    title: csl.title ?? "(untitled)",
+    year: csl.issued?.["date-parts"]?.[0]?.[0]?.toString(),
+    journal: csl["container-title"],
+    doi: csl.DOI,
+    url: csl.URL,
+    authors,
+    volume: csl.volume,
+    issue: csl.issue,
+    pages: csl.page,
+  };
+}
+
+/**
+ * Convert a list of CslItems to WordLiveBuilderSource[], assigning
+ * numeric ids 1..N in input order. This is the bridge the v0.7.5
+ * pipeline uses; the regex Vancouver parser is GONE from the
+ * word-live path entirely.
+ */
+export function cslItemsToWordSources(items: CslItem[]): WordLiveBuilderSource[] {
+  return items.map((csl, i) => cslItemToWordSource(csl, i + 1));
+}
 
 export interface WordLiveBuilderSource {
   /** Numeric id (1, 2, 3, ...). The [N] in the prose. */

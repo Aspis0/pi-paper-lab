@@ -90,6 +90,66 @@ species:
   first_mention: "Danio rerio"
 ```
 
+## Citation styles (v0.7.5)
+
+Three styles ship out of the box. Pass `--style <id>` to `paper-lab-finalize`
+or `paper-lab-export`:
+
+| Style | What it is | Example output |
+|---|---|---|
+| `ieee` (default) | IEEE numeric | `Y. Liu and P. Saavedra, "Cachexia in Drosophila", Disease Models & Mechanisms, vol. 15, no. 6, p. dmm049298, Jun 2022, doi: 10.1242/dmm.049298.` |
+| `vancouver` | Vancouver / ICMJE | `Liu Y, Saavedra P. Cachexia in Drosophila. Disease Models & Mechanisms 2022;15:dmm049298. https://doi.org/10.1242/dmm.049298.` |
+| `apa` | APA 7th edition (author-date) | `Liu, Y., & Saavedra, P. (2022). Cachexia in Drosophila. Disease Models & Mechanisms, 15(6), dmm049298.` |
+
+The styles are powered by [Citestyle](https://github.com/uniweb/csl)
+(pre-compiled CSL XML bundled into JavaScript modules, ~9-13KB total
+per style). No runtime CSL parsing — the styles are compiled at
+Uniweb's build time.
+
+## Export bibliography to BibTeX / RIS / CSL-JSON (v0.7.5)
+
+The `paper-lab-export` CLI dumps a paper's resolved bibliography in
+the format your reference manager expects:
+
+```bash
+paper-lab-export paper.md --format bibtex > refs.bib
+paper-lab-export paper.md --format ris    > refs.ris
+paper-lab-export paper.md --format csljson > refs.json
+paper-lab-export paper.md --format all    > everything.txt
+```
+
+Uses [Citation.js](https://github.com/citation-js/citation-js)
+(`@citation-js/core` + `@citation-js/plugin-bibtex` +
+`@citation-js/plugin-ris`), lazy-loaded only when invoked. Hot path
+(`paper-lab-finalize`) stays Citation.js-free.
+
+## Local reference library (v0.7.5)
+
+`paper-lab-library` manages a per-project, gitignored directory of
+CSL-JSON papers at `<projectRoot>/paper-lab-library/`. Use it for
+offline citation resolution and reuse.
+
+```bash
+paper-lab-library add 10.1038/nature12373          # Add by DOI
+paper-lab-library add-from-search "cachexia Drosophila"  # Search OpenAlex
+paper-lab-library import refs.bib                 # Import .bib / .ris / .csl.json
+paper-lab-library list                            # List all entries
+paper-lab-library search "cachexia IL6"           # BM25 search (offline)
+paper-lab-library export --format bibtex          # Export to BibTeX
+paper-lab-library sync                            # Rebuild SQLite cache
+paper-lab-library stats
+```
+
+Auto-populating the library from `/paper-cite` is **off by default**.
+Toggle via `/paper-lab` → option 9. Off-by-default aligns with:
+"your paper's citation history stays on your machine unless you
+opt in".
+
+The library uses [sql.js](https://github.com/sql-js/sql.js) (pure
+WASM SQLite, no native binding, no `node-gyp` build) for the
+optional cache. Search uses pure-TypeScript BM25 (no ML model, no
+embeddings) — see `src/library/bm25.ts`.
+
 ## Citation backends
 
 `/paper-lab` → option 6 picks:

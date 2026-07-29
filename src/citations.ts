@@ -5,7 +5,9 @@
 import { searchScholar, formatScholarResults, type ScholarResult } from "./serper-scholar.ts";
 import { searchExa, type ExaSearchResult } from "./exa-scholar.ts";
 import { loadConfig } from "./config.ts";
-import { lookupDoi, formatCrossRefWork, formatVancouver, type CrossRefWork } from "./crossref.ts";
+import { lookupDoi, formatCrossRefWork, type CrossRefWork } from "./crossref.ts";
+import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
+import { formatBibliography as formatCslBibliography } from "./csl/formatBibliography.ts";
 
 // === [CITE:topic] marker ===
 // A claim that needs a source is marked with [CITE:topic_description].
@@ -354,9 +356,10 @@ export async function generateBibliography(
     try {
       const work = await lookupDoi(doi);
       if (work) {
+        const csl = crossrefToCsl(work, doi);
         bibliography.push({
           number: num,
-          citation: formatVancouver(work, doi),
+          citation: formatCslBibliography([csl], { style: "vancouver" }),
           doi,
         });
       } else {

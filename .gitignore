@@ -38,3 +38,35 @@ oracle-data/
 
 # pi-subagents root state + transcripts (sandbox-local, large, owner-specific)
 .pi-subagents/
+
+# v0.7.5 (M4): local reference library. Per-project, gitignored by default.
+# Users can opt in to git-tracking per repo by removing this line and
+# adding only the metadata.json files (not papers/<id>/abstract.txt
+# which can be large and is regenerated).
+paper-lab-library/
+
+# Planning docs — never commit. These are local "thinking" docs that live
+# alongside the code during design phase. Use ~/.pi/agent/memory/ for
+# cross-session persistence, not git. Migrate final state to specs/ if
+# it becomes canonical (use migrate-spec skill).
+PLAN-*.md
+plan.md
+PLAN*.md
+plan*.md
+# In-progress design drafts (anything ending in -draft.md or in /specs/drafts/)
+*-draft.md
+/specs/drafts/
+/specs/design/
+
+# All planning artifacts — local only, never in git. Whole subtree.
+# Includes audits, state, scope, release-plan, epics, ADRs, design notes,
+# comparison docs, etc. If something here becomes canonical for execution,
+# move it elsewhere (e.g. /docs/, CHANGELOG.md) and explicitly git-add it.
+/specs/
+CITESTYLE-VS-CITATION-JS.md
+
+# AI agent conventions — local config, not shared. Move to wiki or
+# CONTRIBUTING.md if we ever open-source this repo.
+CLAUDE.md
+CONVENTIONS.md
+AGENTS.md

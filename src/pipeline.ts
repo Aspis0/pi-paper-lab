@@ -28,6 +28,9 @@ import { loadLexicon, silentRewrite, scoreText } from "./anti-ai-lexicon.ts";
 import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER, CITE_WITH_DOI } from "./citations.ts";
 import { classifyFindings, formatClarifyPrompt, serialiseClarifications, type ClarifyItem } from "./clarify.ts";
 import { lookupDoi, formatVancouver, type CrossRefWork } from "./crossref.ts";
+import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
+import { cslItemsToWordSources } from "./word-live-builder.ts";
+import type { CslItem } from "./csl/schema.ts";
 import { detectAI, detectRewriteLoop, formatDetectionReport, type AIDetectionResult } from "./ai-detector.ts";
 import { buildWordLive, type WordLiveBuilderSource } from "./word-live-builder.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -727,6 +730,12 @@ export function finalizeDoc(
 
   // 1. Parse all [N](<doi:...>) and [N](doi:...) markers and build Vancouver citations via CrossRef
   const citations = new Map<number, string>();
+  // v0.7.5 (M2): parallel CSL-JSON map for the live-citation branch.
+  // --live passes these directly to buildWordLive (no regex Vancouver
+  // re-parse, no parseVancouverForLive). The static-text path still uses
+  // `citations` (Vancouver regex) for backwards compatibility with
+  // existing golden tests; M5 cleanup removes formatVancouver entirely.
+  const cslItems = new Map<number, CslItem>();
 
   // 1a. Load any cached citations from the sidecar file (v0.6.3).
   //
@@ -793,6 +802,8 @@ export function finalizeDoc(
         const vol = work.volume ?? "";
         const pages = work.page ?? "";
         citations.set(num, `${num}. ${authors}. ${title}. ${journal}. ${year}${vol ? ";" + vol : ""}${pages ? ":" + pages : ""}. doi:${doi}`);
+        // M2: also populate CSL-JSON for the live-citation path.
+        cslItems.set(num, crossrefToCsl(work, doi));
       } else {
         citations.set(num, `${num}. (doi:${doi})`);
       }
@@ -1031,18 +1042,35 @@ export function finalizeDoc(
       // runtime (jiti/strip-types) — the catch path produced a static .docx
       // without the CustomXML parts, so Word never saw live citations.
       //
-      // v0.7.2 fix: parseVancouverForLive is the canonical entry point.
-      // It is also exported (top of file) so the regression test in
-      // tests/vancouver-parser-regressions.test.ts can call it directly
-      // instead of carrying a STALE regex copy. CRIT-1/CRIT-2/CRIT-3/MED-1/MED-2
-      // from v0.7.1 hotfix audit.
+      // v0.7.2 fix: parseVancouverForLive was the canonical entry point.
+      //
+      // v0.7.5 fix (M2.4): the canonical path is now CslItem → b:Source.
+      // The regex Vancouver parser is reserved for the FALLBACK when
+      // `cslItems` is empty (i.e. the user ran --live against an old
+      // sidecar that only carries Vancouver strings — they would
+      // otherwise lose their live bibliography). New finalize runs
+      // that resolve DOIs populate `cslItems` directly and skip the
+      // regex entirely.
       const liveSources: WordLiveBuilderSource[] = [];
-      for (const [, entry] of citations.entries()) {
-        const source = parseVancouverForLive(entry);
-        if (source) liveSources.push(source);
-        // Entries that don't match any arm are silently skipped (gap in
-        // the live bibliography). The static bibliography will still list
-        // them, so the user has a paper trail.
+      if (cslItems.size > 0) {
+        // Preferred: structured CslItem → WordLiveBuilderSource. No
+        // regex, no parser bugs. Citation numbers assigned in
+        // insertion order (1, 2, 3, ...).
+        const orderedItems = [...cslItems.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([, csl]) => csl);
+        liveSources.push(...cslItemsToWordSources(orderedItems));
+      } else {
+        // Fallback: legacy Vancouver-string parser. Only used when
+        // cslItems is empty (old sidecar, no inline DOIs). M5 cleanup
+        // removes parseVancouverForLive entirely.
+        for (const [, entry] of citations.entries()) {
+          const source = parseVancouverForLive(entry);
+          if (source) liveSources.push(source);
+          // Entries that don't match any arm are silently skipped (gap in
+          // the live bibliography). The static bibliography will still list
+          // them, so the user has a paper trail.
+        }
       }
       buildWordLive(docxPath, liveSources, { style: "ieee" });
     } catch (err: any) {
@@ -1068,6 +1096,11 @@ export function finalizeDoc(
 interface SidecarEntry {
   doi: string | null;
   vancouver: string;
+  /** v0.7.5 (M2): CSL-JSON for the live-citation path. Optional —
+   *  sidecars from v0.7.0/v0.7.2 only carry {doi, vancouver}. When
+   *  missing, the live path falls back to the Vancouver regex parser
+   *  (deprecated, removed in M5). */
+  csl?: CslItem;
 }
 
 interface SidecarFile {

@@ -1,31 +1,33 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.7.2",
+  "version": "0.7.5",
   "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
   "bin": {
     "paper-lab-finalize": "./bin/finalize.mjs",
     "paper-lab-word": "./bin/generate-word.mjs",
-    "paper-lab-seed": "./bin/seed-sidecar.mjs"
+    "paper-lab-seed": "./bin/seed-sidecar.mjs",
+    "paper-lab-export": "./bin/export.mjs",
+    "paper-lab-library": "./bin/library.mjs"
   },
   "files": [
     "extensions",
     "src",
     "src/source-finders",
+    "src/csl",
+    "src/library",
     "bin",
     "data",
     "README.md",
-    "CHANGELOG.md",
-    "PLAN-AGNOSTIC.md",
-    "PLAN-STUDY-PHASE.md",
-    "PLAN-EXA-BACKEND.md",
-    "PLAN-v0.7-word-citations.md"
+    "CHANGELOG.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts \"tests/**/*.test.ts\"",
     "test:smoke": "node --experimental-strip-types tests/live-runtime-smoke.ts",
+    "test:library:cli": "node --experimental-strip-types --test tests/library/cli.test.ts",
+    "test:export:cli": "node --experimental-strip-types --test tests/csl/export-cli.test.ts",
     "audit": "npm audit --audit-level=high",
     "prepack": "npm run typecheck && npm test && npm run test:smoke"
   },
@@ -60,11 +62,19 @@
     "node": ">=22.7"
   },
   "dependencies": {
+    "@citation-js/core": "^0.8.2",
+    "@citation-js/plugin-bibtex": "^0.8.2",
+    "@citation-js/plugin-csl": "^0.8.2",
+    "@citation-js/plugin-ris": "^0.8.2",
+    "@citestyle/core": "^1.0.0",
+    "@citestyle/registry": "^1.1.0",
+    "@citestyle/styles": "^1.0.0",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "adm-zip": "^0.6.0",
     "jiti": "^2.7.0",
     "js-yaml": "^4.1.0",
+    "sql.js": "^1.14.1",
     "typebox": "^1.0.0"
   },
   "overrides": {
