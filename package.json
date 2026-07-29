@@ -26,10 +26,11 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts \"tests/**/*.test.ts\"",
     "test:smoke": "node --experimental-strip-types tests/live-runtime-smoke.ts",
+    "test:smoke:csl": "node --experimental-strip-types tests/live-runtime-csl-smoke.ts",
     "test:library:cli": "node --experimental-strip-types --test tests/library/cli.test.ts",
     "test:export:cli": "node --experimental-strip-types --test tests/csl/export-cli.test.ts",
     "audit": "npm audit --audit-level=high",
-    "prepack": "npm run typecheck && npm test && npm run test:smoke"
+    "prepack": "npm run typecheck && npm test && npm run test:smoke && npm run test:smoke:csl"
   },
   "pi": {
     "extensions": [
