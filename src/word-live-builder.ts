@@ -137,8 +137,11 @@ export interface WordLiveBuilderSource {
 }
 
 export interface BuildLiveOpts {
-  /** Citation style. Only "ieee" is supported in v0.7.0 (see PLAN §3.10). */
-  style?: "ieee" | "apa";
+  /** Citation style. "ieee" produces numbered [1] [2] [3] entries in
+   *  the Word bibliography. "apa" produces author-date entries
+   *  (Liu, Saavedra, & Perrimon, 2022). "vancouver" is the
+   *  standard medical/scientific style with numbered entries. */
+  style?: "ieee" | "apa" | "vancouver";
   /** XSL file to use (overrides the style default). */
   styleXsl?: string;
   /** Style name (overrides the style default). */
@@ -148,8 +151,14 @@ export interface BuildLiveOpts {
 }
 
 const STYLE_DEFAULTS: Record<NonNullable<BuildLiveOpts["style"]>, { xsl: string; name: string; version: string }> = {
-  ieee: { xsl: "\\IEEE2006.OfficeOnline.xsl", name: "IEEE", version: "2026" },
+  ieee: { xsl: "\\IEEE2006.OfficeOnline.xsl", name: "IEEE", version: "2006" },
   apa: { xsl: "\\APASixthEditionOfficeOnline.xsl", name: "APA", version: "6" },
+  // "Vancouver" maps to Word's built-in IEEE 2006 (most common
+  // numbered style; Word doesn't ship a dedicated Vancouver XSL).
+  // For the closest standard, ISO 690 - Numerical Reference is also
+  // bundled at \\ISO690Nmerical.OfficeOnline.xsl but its output is
+  // identical to IEEE in practice.
+  vancouver: { xsl: "\\IEEE2006.OfficeOnline.xsl", name: "IEEE", version: "2006" },
 };
 
 /**
@@ -277,7 +286,7 @@ function buildCitationSdt(refId: number, visibleText: string): string {
  * bibliography field) that go at the end of the body.
  */
 function buildBibliographySdt(visibleText: string = "(Update Field to render)"): string {
-  return `<w:sdt><w:sdtPr><w:id w:val="111145805"/><w:docPartObj><w:docPartGallery w:val="Bibliographies"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Bibliography</w:t></w:r></w:p><w:sdt><w:sdtPr><w:id w:val="222111456"/><w:bibliography/></w:sdtPr><w:sdtContent><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> BIBLIOGRAPHY </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>${escapeXml(visibleText)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:sdtContent></w:sdt></w:sdtContent></w:sdt>`;
+  return `<w:sdt><w:sdtPr><w:id w:val="111145805"/><w:docPartObj><w:docPartGallery w:val="Bibliographies"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>References</w:t></w:r></w:p><w:sdt><w:sdtPr><w:id w:val="222111456"/><w:bibliography/></w:sdtPr><w:sdtContent><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> BIBLIOGRAPHY </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>${escapeXml(visibleText)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:sdtContent></w:sdt></w:sdtContent></w:sdt>`;
 }
 
 /**

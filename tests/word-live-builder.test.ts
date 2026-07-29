@@ -75,7 +75,7 @@ test("buildItem1Xml: contains the b:Sources root with IEEE defaults", () => {
   assert.ok(has("<b:Sources", xml));
   assert.ok(has(`SelectedStyle="\\IEEE2006.OfficeOnline.xsl"`, xml));
   assert.ok(has(`StyleName="IEEE"`, xml));
-  assert.ok(has(`Version="2026"`, xml));
+  assert.ok(has(`Version="2006"`, xml));
 });
 
 test("buildItem1Xml: style='apa' uses APA defaults", () => {

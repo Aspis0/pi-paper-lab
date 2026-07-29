@@ -1121,7 +1121,16 @@ export function finalizeDoc(
       // If the CslItem path populated a map, pass it to buildWordLive
       // so the CITATION field rewriter can remap the user's original
       // [N] markers (e.g. 1, 4, 7) to positional ids (1, 2, 3).
-      const buildOpts: any = { style: "ieee" };
+      // The bibliography style (ieee, apa, vancouver) is read from
+      // the user's config (`citation_style`) so they can switch
+      // between numbered and author-date formats via /paper-lab.
+      const config = loadConfig();
+      const styleRaw = (config.citation_style ?? "ieee").toLowerCase();
+      const style: "ieee" | "apa" | "vancouver" =
+        styleRaw === "apa" ? "apa"
+        : styleRaw === "vancouver" ? "vancouver"
+        : "ieee";
+      const buildOpts: any = { style };
       const lastMap = (buildWordLive as any)._lastMap as
         | Map<number, number>
         | undefined;

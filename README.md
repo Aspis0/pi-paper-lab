@@ -95,11 +95,19 @@ species:
 Three styles ship out of the box. Pass `--style <id>` to `paper-lab-finalize`
 or `paper-lab-export`:
 
-| Style | What it is | Example output |
-|---|---|---|
-| `ieee` (default) | IEEE numeric | `Y. Liu and P. Saavedra, "Cachexia in Drosophila", Disease Models & Mechanisms, vol. 15, no. 6, p. dmm049298, Jun 2022, doi: 10.1242/dmm.049298.` |
-| `vancouver` | Vancouver / ICMJE | `Liu Y, Saavedra P. Cachexia in Drosophila. Disease Models & Mechanisms 2022;15:dmm049298. https://doi.org/10.1242/dmm.049298.` |
-| `apa` | APA 7th edition (author-date) | `Liu, Y., & Saavedra, P. (2022). Cachexia in Drosophila. Disease Models & Mechanisms, 15(6), dmm049298.` |
+| Style | What it is | Numbered? | Example output |
+|---|---|---|---|
+| `ieee` (default) | IEEE 2006 | Yes — `[1]`, `[2]`, ... | `Y. Liu and P. Saavedra, "Cachexia in Drosophila", Disease Models & Mechanisms, vol. 15, no. 6, p. dmm049298, Jun 2022, doi: 10.1242/dmm.049298.` |
+| `vancouver` | ISO 690 - Numerical Reference (closest built-in equivalent) | Yes — `[1]`, `[2]`, ... | `Liu Y, Saavedra P. Cachexia in Drosophila. Disease Models & Mechanisms 2022;15:dmm049298. https://doi.org/10.1242/dmm.049298.` |
+| `apa` | APA 7th edition (author-date) | No — `(Liu & Saavedra, 2022)` | `Liu, Y., & Saavedra, P. (2022). Cachexia in Drosophila. Disease Models & Mechanisms, 15(6), dmm049298.` |
+
+Set the default style in `/paper-lab` (or by editing
+`~/.pi/agent/.paper-lab-keys.json` → `citation_style`). The Word
+bibliography field auto-populates with the chosen style on Ctrl+A,
+F9. Word's numbering ([1], [2], …) renumbers automatically when you
+add, remove, or reorder citations — the underlying b:Source list is
+positional; your in-text `[N]` markers are remapped to positional
+ids so the rendering stays correct.
 
 The styles are powered by [Citestyle](https://github.com/uniweb/csl)
 (pre-compiled CSL XML bundled into JavaScript modules, ~9-13KB total

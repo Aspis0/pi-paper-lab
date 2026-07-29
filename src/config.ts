@@ -15,6 +15,7 @@ export interface PaperLabConfig {
   serper?: string;
   exa?: string;                                 // NEW: Exa.ai API key
   citation_backend?: CitationBackend;           // NEW: which backend to use
+  citation_style?: "ieee" | "apa" | "vancouver"; // NEW: Word bibliography style
   copyleaks_email?: string;
   copyleaks_api_key?: string;
   domain?: string;  // domain key from data/domains/*.yaml, or "auto" for auto-detect
