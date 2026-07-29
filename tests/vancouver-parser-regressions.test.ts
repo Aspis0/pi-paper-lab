@@ -1,35 +1,38 @@
 // tests/vancouver-parser-regressions.test.ts
 // Regression tests for the Vancouver parser in finalizeDoc's --live branch.
-// These tests reproduce the CRIT-3, CRIT-4, MED-3, HIGH-5 findings
-// from the M4 audit and verify the fixes.
-//
-// The regex under test is the one inside finalizeDoc that parses
-// Vancouver-format entries back into source fields. We test it by
-// replicating the exact pattern here and asserting on the captures.
+// Tests use the *actual* exported function from src/pipeline.ts
+// (parseVancouverForLive) — not a stale regex copy. CRIT-1 from the
+// v0.7.1 hotfix audit previously let the test file diverge from the
+// implementation; this version imports the function so they cannot
+// drift again.
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
+import { parseVancouverForLive, stripTrailingParen } from "../src/pipeline.ts";
 
-// The parser regex (mirroring pipeline.ts:liveSources branch).
-// Kept in the test file so the test is self-contained.
-const FULL = /^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4})(?:;(\d+)(?:\((\d+)\))?(?::(.+?))?)?\.\s+doi:(\S+?)\.?$/;
-const PLACEHOLDER = /^(\d+)\.\s+\[(.+)\]$/;
-
+// Adapter to keep legacy assertions working without forcing the tests to
+// be rewritten in lock-step with the implementation (a single API shape).
 function parse(entry: string) {
-  const full = entry.match(FULL);
-  if (full) {
-    const [, n, authors, title, journal, year, vol, issue, pages, doi] = full;
-    const id = parseInt(n!, 10);
-    if (!Number.isFinite(id) || id < 1) return null;
-    return { id, title, authors, journal, year, vol, issue, pages, doi, placeholder: false };
-  }
-  const ph = entry.match(PLACEHOLDER);
-  if (ph) {
-    const id = parseInt(ph[1]!, 10);
-    if (!Number.isFinite(id) || id < 1) return null;
-    return { id, title: `[${ph[2]}]`, placeholder: true };
-  }
-  return null;
+  const s = parseVancouverForLive(entry);
+  if (!s) return null;
+  // The implementation returns WordLiveBuilderSource which has fewer
+  // fields than the test's old `parse()` adapter used. Wrap into a flat
+  // shape that all of the existing tests below can query.
+  const firstAuthor = (s as any).authors?.[0]?.family;
+  return {
+    id: s.id,
+    title: s.title,
+    authors: (s as any).authors ? (s as any).authors.map((a: any) => a.family).join(", ") : "",
+    journal: (s as any).journal ?? "",
+    year: (s as any).year ?? "",
+    vol: (s as any).volume ?? undefined,
+    issue: (s as any).issue ?? undefined,
+    pages: (s as any).pages ?? undefined,
+    doi: (s as any).doi,
+    // For a placeholder entry, the implementation sets title to "[…]"
+    // and has no DOI. We expose `placeholder: true` for legacy tests.
+    placeholder: !!(s as any).doi === false && !!firstAuthor === false ? true : false,
+  };
 }
 
 test("CRIT-3 fix: issue parsed separately from volume (was merged into vol)", () => {
@@ -119,4 +122,67 @@ test("et al. author list still parses correctly (MED-2 check)", () => {
   assert.ok(r, "et al. entries must match");
   assert.equal(r!.authors, "Doe A, et al");
   assert.equal(r!.title, "Multiple authors");
+});
+
+test("v0.7.2 CRIT-3 fix: noVol journal name with abbreviated dots is captured whole", () => {
+  // CrossRef sometimes returns dotted abbreviations like
+  // "Proc. Natl. Acad. Sci.". The noVol regex must NOT truncate
+  // to the last segment ("Sci"). The journal may or may not include
+  // the final period (regex tolerates both).
+  const entry = "1. Author X. A study. Proc. Natl. Acad. Sci. 2025:357-364. doi:10.1073/pnas.2025.x";
+  const r = parse(entry);
+  assert.ok(r, "must match noVol");
+  // Allow either "Proc. Natl. Acad. Sci." or "Proc. Natl. Acad. Sci"
+  // (regex may or may not consume the final period depending on journal
+  // capture and surrounding context).
+  assert.ok(
+    r!.journal === "Proc. Natl. Acad. Sci." || r!.journal === "Proc. Natl. Acad. Sci",
+    `journal must keep all dotted segments (got: '${r!.journal}')`,
+  );
+  assert.equal(r!.year, "2025");
+  assert.equal(r!.pages, "357-364");
+  assert.equal(r!.doi, "10.1073/pnas.2025.x");
+});
+
+test("v0.7.2 noVol: standard entry without volume/issue", () => {
+  const entry = "1. Yu B. UTBoost. ACL. 2025:3762-3774. doi:10.18653/v1/2025.acl-long.189";
+  const r = parse(entry);
+  assert.ok(r, "must match noVol");
+  // The journal may end in "." or not — both are acceptable.
+  assert.ok(
+    r!.journal === "ACL" || r!.journal === "ACL.",
+    `journal (got: '${r!.journal}')`,
+  );
+  assert.equal(r!.vol, undefined, "no vol in noVol");
+  assert.equal(r!.pages, "3762-3774");
+});
+
+test("v0.7.2 MED-2 fix: doiOnly rejects asymmetric parens (open without close)", () => {
+  // "1. (doi:10.xxx" — open without close — should NOT match.
+  // Previously the lenient `\)?$` matched it.
+  const r = parse("1. (doi:10.1234/abcd");
+  assert.equal(r, null, "asymmetric open paren must be rejected");
+});
+
+test("v0.7.2 MED-2 fix: doiOnly accepts symmetric parens", () => {
+  const r = parse("1. (doi:10.48550/arXiv.2603.27277)");
+  assert.ok(r, "must match");
+  assert.equal(r!.doi, "10.48550/arXiv.2603.27277", "trailing ) is stripped");
+});
+
+test("v0.7.2 MED-1 fix: stripTrailingParen removes ALL trailing parens", () => {
+  assert.equal(stripTrailingParen("10.1234/x))"), "10.1234/x", "two trailing parens stripped");
+  assert.equal(stripTrailingParen("10.1234/x)))"), "10.1234/x", "three trailing parens stripped");
+  assert.equal(stripTrailingParen("10.1234/x)"), "10.1234/x", "one trailing paren stripped");
+  assert.equal(stripTrailingParen("10.1234/x"), "10.1234/x", "no trailing parens — no change");
+  // Internal parens preserved.
+  assert.equal(stripTrailingParen("10.1016/S0896-6273(00)80701-1"), "10.1016/S0896-6273(00)80701-1");
+});
+
+test("v0.7.2 CRIT-2 fix: placeholder entry is preserved (not silently dropped)", () => {
+  const entry = "1. [Citation metadata unavailable — no DOI found. Re-run /paper-cite to resolve this reference.]";
+  const r = parse(entry);
+  assert.ok(r, "placeholder must be captured so live bibliography has a source");
+  assert.equal(r!.id, 1);
+  assert.ok(r!.title!.includes("Citation metadata unavailable"));
 });

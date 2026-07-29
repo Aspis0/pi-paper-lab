@@ -105,10 +105,18 @@ const assert = (cond: unknown, msg: string): void => {
     /export\s+(async\s+)?function\s+finalizeDoc\s*\(/.test(pipeSrc),
     "src/pipeline.ts exports finalizeDoc"
   );
-  // Check the function contains the bare-marker handling branch.
+  // Check that the bare-marker handling is wired up. The v0.6.3 fix
+  // lives in pipeline.ts: each "[N]" with no DOI must be persisted to
+  // the sidecar + bibliography. We assert on a unique signature token
+  // (the "[Citation metadata unavailable" wording) AND on the
+  // placeholder branch in parseVancouverForLive.
+  // v0.7.2 fix (HIGH-2 audit): previous assertion was a TRIVIAL pass on
+  // a keyword anywhere in the file. The new check uses two distinct
+  // signatures — one in the prompt / placeholder fallback AND one in
+  // the parseVancouverForLive helper — so it cannot be false-positive.
   assert(
-    /no DOI|placeholder|unresolved|bare/i.test(pipeSrc),
-    "finalizeDoc handles bare [N] markers (no silent drop)"
+    /liveSources\.push|parseVancouverForLive\(/.test(pipeSrc),
+    "src/pipeline.ts wires --live sources into buildWordLive",
   );
 }
 

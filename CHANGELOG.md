@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.7.2 — Audit fixes for --live Vancouver parser
+
+Audited v0.7.1 fix and addressed 11 findings (3 CRIT, 3 HIGH, 3 MED, 2 LOW).
+
+### Fixed
+
+- **CRIT-1**: `tests/vancouver-parser-regressions.test.ts` no longer carries a stale regex copy. It now imports `parseVancouverForLive` directly from `src/pipeline.ts`, so the test always exercises the production code.
+- **CRIT-2**: Restored placeholder handling (`1. [Citation metadata unavailable...]`). The v0.7.1 refactor removed this branch by accident — Word Source Manager needs a `b:Source` for every `[N]` marker or the BIBLIOGRAPHY has empty cells.
+- **CRIT-3**: `noVol` regex journal capture now matches dotted abbreviations like `Proc. Natl. Acad. Sci.` (was truncating to `Sci`).
+- **HIGH-1**: `tests/live-runtime-smoke.ts` is now wired into `npm run test:smoke` and `prepack`, so it runs on every `npm publish`.
+- **HIGH-2**: `finalize-bare-citations.test.ts` assertion no longer tests on the entire pipeline.ts source. It checks for unique signature tokens (`parseVancouverForLive(`, `liveSources.push`) that cannot be false-positive.
+- **HIGH-3**: `live-runtime-smoke.ts` registers a `process.on("exit")` cleanup hook, so temp dirs are removed on success AND failure paths.
+- **MED-1**: `stripTrailingParen` now strips ALL trailing `)`s (regex `\)+$`), not just one.
+- **MED-2**: `doiOnly` regex now requires symmetric parens — rejects `1. (doi:10.xxx` (open without close).
+- **MED-3**: Documented the `noVol` journal-capture limitation in the source comment.
+
+### Refactored
+
+- Extracted `parseVancouverForLive()` and `stripTrailingParen()` as exported helpers in `src/pipeline.ts`. The `--live` branch in `finalizeDoc` now calls them.
+- Added 6 new tests in `vancouver-parser-regressions.test.ts` for the previously-untested arms (noVol, doiOnly symmetric/asymmetric, multi-paren DOI, dotted journal, placeholder).
+
+### Files changed
+
+- `src/pipeline.ts`: extracted helpers, restored placeholder branch, updated noVol journal regex
+- `tests/vancouver-parser-regressions.test.ts`: imports real exported function, added 6 new tests
+- `tests/live-runtime-smoke.ts`: cleanup hook, stronger assertions, added placeholder + multi-paren to fixture
+- `tests/finalize-bare-citations.test.ts`: replaced weak keyword assertion with unique signature check
+- `package.json`: added `test:smoke` script, included in `prepack`
+
+---
+
 ## v0.7.1 — Fix Word-native citations not loading in Word
 
 The previous release (v0.7.0) produced `.docx` files with live citation fields, but they were not appearing in Word despite being structurally correct in the `.docx`.

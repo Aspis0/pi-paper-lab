@@ -1,6 +1,6 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
   "type": "module",
   "main": "extensions/index.ts",
@@ -25,8 +25,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:smoke": "node --experimental-strip-types tests/live-runtime-smoke.ts",
     "audit": "npm audit --audit-level=high",
-    "prepack": "npm run typecheck && npm test"
+    "prepack": "npm run typecheck && npm test && npm run test:smoke"
   },
   "pi": {
     "extensions": [

@@ -594,6 +594,89 @@ export function cleanDoi(input: string): string {
   return s.trim();
 }
 
+/**
+ * Strip trailing close-parens that LLM malformed markers leave behind
+ * (e.g. `[1](doi:10.x/xxx)` becomes `10.x/xxx)` after marker split).
+ *
+ * Only applies the strip to ENDS, never internal. Uses `\)+$` to strip
+ * any positive number of trailing parens, preventing residual `)`s
+ * from leaks.
+ *
+ * IMPORTANT: we DO strip trailing `)` even though some DOIs contain
+ * internal `)`, because no real DOI ends with `)`. DOIs are
+ * `10.PREFIX/SUFFIX` where SUFFIX never ends with `)`.
+ *
+ * Exported for testability.
+ */
+export function stripTrailingParen(s: string | undefined): string | undefined {
+  return s ? s.replace(/\)+$/, "") : s;
+}
+
+/**
+ * Parse a Vancouver-format entry produced by `formatVancouver()`
+ * back into structured source fields for the live Word citation
+ * builder. Returns null if the entry is unparseable (e.g. truly
+ * blank `## References` section). Three formats are supported:
+ *
+ *   A) Full Vancouver with volume: "1. Authors. Title. Journal. 2025;36:357-364. doi:..."
+ *   B) No-volume (pages after year only): "1. Authors. Title. Proc. 2025:3762-3774. doi:..."
+ *   C) DOI-only:  "1. (doi:10.xxx)" or "1. doi:10.xxx"
+ *   D) Placeholder: "1. [Citation metadata unavailable...]" (no DOI)
+ *
+ * Exported so tests assert behaviour against the actual implementation
+ * rather than a stale copy (CRIT-1 fix from v0.7.1 hotfix audit).
+ */
+export function parseVancouverForLive(entry: string): WordLiveBuilderSource | null {
+  // A) Full Vancouver.
+  // CRIT-3 (M4 audit): volume MUST be digits (`\d+`), issue is `(digits)`
+  // after the volume. The previous `\S+?` was too loose and caused
+  // `;15(4):1-10` to be parsed as vol="15(4)".
+  // HIGH-5 (M4 audit): parseInt is guarded against NaN.
+  // MED-3 (M4 audit): issue is captured separately.
+  const full = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4})(?:;(\d+)(?:\((\d+)\))?(?::(.+?))?)?\.\s+doi:(\S+?)\.?$/);
+  if (full) {
+    const [, n, authors, title, journal, year, vol, issue, pages, doi] = full;
+    const id = parseInt(n!, 10);
+    if (!Number.isFinite(id) || id < 1) return null;
+    const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
+    return { id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi: stripTrailingParen(doi), authors: authorList, volume: vol, issue, pages };
+  }
+  // B) No-volume: capture journal name allowing embedded dots (e.g.
+  // "Proc. Natl. Acad. Sci.") followed by optional trailing dot and
+  // whitespace+year. CRIT-3 audit: dotted names like "Proc. Natl. Acad.
+  // Sci." used to be truncated to "Sci" because the journal capture
+  // was `[^.]+?` (excluded dots). The new capture `((?:[^.]+\.)*[^.]+\.?)`
+  // matches one-or-more "word." segments optionally followed by a
+  // final word (with or without trailing period).
+  const noVol = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+((?:[^.]+\.)*[^.]+\.?)\s+(\d{4}):(\S+?)\.\s+doi:(\S+?)\.?$/);
+  if (noVol) {
+    const [, n, authors, title, journal, year, pages, doi] = noVol;
+    const id = parseInt(n!, 10);
+    if (!Number.isFinite(id) || id < 1) return null;
+    const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
+    return { id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi: stripTrailingParen(doi), authors: authorList, pages };
+  }
+  // C) DOI-only. Symmetric parens: require `(?:` either both or neither.
+  const doiOnly = entry.match(/^(\d+)\.\s+(?:\(doi:(\S+?)\.?\)|doi:(\S+?)\.?)$/);
+  if (doiOnly) {
+    const id = parseInt(doiOnly[1]!, 10);
+    if (!Number.isFinite(id) || id < 1) return null;
+    return { id, tag: `Ref${id}`, title: `Reference ${id}`, doi: stripTrailingParen(doiOnly[2] ?? doiOnly[3]) };
+  }
+  // D) Placeholder — CRIT-2 fix (v0.7.1 hotfix audit): the CRIT-4
+  // (M4 audit) placeholder handling was REMOVED by mistake in
+  // v0.7.1. Restore it so `[N]` references without DOIs still get
+  // a b:Source (so Word's Source Manager and BIBLIOGRAPHY do not
+  // show empty cells for them).
+  const placeholder = entry.match(/^(\d+)\.\s+\[(.+)\]$/);
+  if (placeholder) {
+    const id = parseInt(placeholder[1]!, 10);
+    if (!Number.isFinite(id) || id < 1) return null;
+    return { id, tag: `Ref${id}`, title: `[${placeholder[2]}]` };
+  }
+  return null;
+}
+
 // === finalizeDoc: ONE function that does everything ===
 // Reads .md with [N](doi:...) → generates bibliography → strips DOI → superscript [N] → .docx
 // The LLM only needs to write the .md and call this.
@@ -948,43 +1031,18 @@ export function finalizeDoc(
       // runtime (jiti/strip-types) — the catch path produced a static .docx
       // without the CustomXML parts, so Word never saw live citations.
       //
-      // Sidecar DOIs may retain a trailing `)` from the marker form
-      // `[N](<doi:10.x/xxx>)` when the LLM wrote the Vancouver entry as
-      // "N. (doi:10.x/xxx)" or the DOI resolver returned a string with a
-      // trailing paren. Strip it ONLY here, on the extracted DOI, because
-      // `cleanDoi` (public) deliberately preserves `)` as valid DOI content.
-      const stripTrailingParen = (s: string | undefined): string | undefined =>
-        s ? s.replace(/\)$/, "") : s;
-
+      // v0.7.2 fix: parseVancouverForLive is the canonical entry point.
+      // It is also exported (top of file) so the regression test in
+      // tests/vancouver-parser-regressions.test.ts can call it directly
+      // instead of carrying a STALE regex copy. CRIT-1/CRIT-2/CRIT-3/MED-1/MED-2
+      // from v0.7.1 hotfix audit.
       const liveSources: WordLiveBuilderSource[] = [];
       for (const [, entry] of citations.entries()) {
-        // Parse a Vancouver-format entry back into source fields.
-        // We support three formats:
-        //   A) Full Vancouver: "1. Authors. Title. Journal. 2025;36:357-364. doi:..."
-        //   B) No-volume:      "1. Authors. Title. Journal/Proc. 2025:3762-3774. doi:..."
-        //   C) DOI-only:       "1. (doi:...)" or "1. doi:..." or "1. [Citation...]"
-        const full = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4})(?:;(\d+)(?:\((\d+)\))?(?::(.+?))?)?\.\s+doi:(\S+?)\.?$/);
-        const noVol = entry.match(/^(\d+)\.\s+(.+?)\.\s+(.+?)\.\s+([^.]+?)\.\s+(\d{4}):(\S+?)\.\s+doi:(\S+?)\.?$/);
-        const doiOnly = entry.match(/^(\d+)\.\s+\(?doi:(\S+?)\.?\)?$/);
-        if (full) {
-          const [, n, authors, title, journal, year, vol, issue, pages, doi] = full;
-          const id = parseInt(n!, 10);
-          if (!Number.isFinite(id) || id < 1) continue;
-          const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
-          liveSources.push({ id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi: stripTrailingParen(doi), authors: authorList, volume: vol, issue, pages });
-        } else if (noVol) {
-          const [, n, authors, title, journal, year, pages, doi] = noVol;
-          const id = parseInt(n!, 10);
-          if (!Number.isFinite(id) || id < 1) continue;
-          const authorList = authors!.split(/,\s*/).map((family) => ({ family }));
-          liveSources.push({ id, tag: `Ref${id}`, title: title!, year, journal: journal!.trim(), doi: stripTrailingParen(doi), authors: authorList, pages });
-        } else if (doiOnly) {
-          const id = parseInt(doiOnly[1]!, 10);
-          if (!Number.isFinite(id) || id < 1) continue;
-          liveSources.push({ id, tag: `Ref${id}`, title: `Reference ${id}`, doi: stripTrailingParen(doiOnly[2]) });
-        }
-        // If none of the regex match we skip silently: the static bibliography
-        // still has the entry, the live one will have a gap — acceptable.
+        const source = parseVancouverForLive(entry);
+        if (source) liveSources.push(source);
+        // Entries that don't match any arm are silently skipped (gap in
+        // the live bibliography). The static bibliography will still list
+        // them, so the user has a paper trail.
       }
       buildWordLive(docxPath, liveSources, { style: "ieee" });
     } catch (err: any) {
