@@ -26,7 +26,7 @@ npm install -g bun-docx
 
 **Windows (Git Bash):**
 
-Download `docx.exe` from the [bun-docx releases](https://github.com/SFETNI/bun-docx/releases) and put it in `~/.local/bin/` so the extension can find it.
+Download `docx.exe` from the [bun-docx releases](https://github.com/kklimuk/docx-cli) and put it in `~/.local/bin/` so the extension can find it.
 
 **Get a Serper API key** at https://serper.dev (2,500 free searches/month). Optional: get an [Exa](https://dashboard.exa.ai/api-keys) key for the alternative backend.
 
