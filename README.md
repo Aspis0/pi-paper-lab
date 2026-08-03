@@ -1,6 +1,6 @@
 # pi-paper-lab
 
-A [pi](https://github.com/earendil-works/pi-coding-agent) extension for writing scientific papers in any biology field. Anti-AI rewrite, Vancouver citations, `.docx` output.
+A [pi](https://github.com/earendil-works/pi) extension for writing scientific papers in any biology field. Anti-AI rewrite, Vancouver citations, `.docx` output.
 
 v0.7.0 adds **Word-native citations**: the generated `.docx` has live citation fields that renumber automatically when you edit the document in Word.
 
@@ -10,7 +10,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 ## Install
 
-Requires [pi](https://github.com/earendil-works/pi-coding-agent) ≥ 0.6.
+Requires [pi](https://github.com/earendil-works/pi) ≥ 0.6.
 
 **macOS / Linux / WSL:**
 
