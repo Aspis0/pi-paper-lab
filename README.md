@@ -2,9 +2,13 @@
 
 A [pi](https://github.com/earendil-works/pi-coding-agent) extension for writing scientific papers in any biology field. Anti-AI rewrite, Vancouver citations, `.docx` output.
 
-v0.7.0 adds **Word-native citations**: the generated `.docx` has live citation fields that renumber automatically when you edit the document in Word.
+v0.7.5 adds **Word-native auto-renumbering** (`--live`): the `.docx` gets live CITATION fields that renumber when you edit in Word (`Ctrl+A, F9`). The BIBLIOGRAPHY field populates from the source list.
 
-Reads and writes `.docx` via the [bun-docx](https://www.npmjs.com/package/bun-docx) CLI (thanks to the bun-docx project for the file conversion backend).
+**v0.7.6**: live is the **default**. Citations render as superscript `[N]` once the bundled `IEEE2006SuperscriptOfficeOnline.xsl` is installed (one-time, with consent: `paper-lab-finalize --install-style file.md`). The BIBLIOGRAPHY field also caches the rendered list, so non-Word apps still show a complete bibliography. Pass `--no-live`/`--static` for a plain `<sup>[N]</sup>` + text References section (no Word fields).
+
+> **On auto-renumber:** Word never renumbers citation fields automatically when you delete one — that requires a plugin (Zotero/Mendeley intercept edits). After deleting a `[N]` in the text, run `Ctrl+A` → `F9` (or the ribbon *Update Citations & Bibliography*) to renumber. This is a Word engine limit, not fixable from a `.docx`.
+
+Reads and writes `.docx` via the [bun-docx](https://www.npmjs.com/package/bun-docx) CLI.
 
 See [CHANGELOG.md](./CHANGELOG.md) for version history.
 
@@ -50,30 +54,35 @@ Interactive menu for API keys, domain selection, citation backend.
 
 `/paper-cite` skips the study phase. It finds citations for existing claims.
 
-### Word-native citations (new in v0.7.0)
+### Word-native citations
 
-By default, `/paper-write` and `/paper-rewrite` produce a `.docx` with **Word-native citation fields** (`--live` mode). This means:
+By default, the `.docx` has **Word-native citation fields** (live mode, v0.7.6 default). This means:
 
-- The `.docx` opens in Word and the **Source Manager** shows all your citations
-- In-text numbers renumber automatically when you delete/add citations (`Ctrl+A, F9`)
+- The **Source Manager** shows all your citations (References → Manage Sources)
+- In-text numbers renumber automatically when you add/delete citations (`Ctrl+A, F9`)
 - The bibliography regenerates from the source list
+- The field also caches the rendered list, so LibreOffice / Google Docs / Pages still show a complete bibliography (they can't renumber, but they display it)
 
-To produce a static `.docx` (for final submission), pass `--static`:
+To force a fully static `.docx` (no Word fields — plain `<sup>[N]</sup>` + a manual `## References` section), pass `--no-live` (alias `--static`):
 
 ```
 /paper-write "topic" --static
 ```
 
-The static output has `<sup>[N]</sup>` + a manual `## References` section — identical to v0.6.x.
+The static output has `<sup>[N]</sup>` + a manual `## References` section — no Word dependency.
+
+### Offline resolution
+
+Once you run `paper-lab-finalize`, it writes a **sidecar file** (`paper.citations.json`) caching every resolved citation (DOI, title, formatted text). On subsequent runs, cached entries resolve instantly — no CrossRef roundtrip. Only new `[N]` markers or changed DOIs trigger fresh lookups.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/paper-write <description> [--output path] [--static]` | Generate text from a description. Default is `--live` (Word-native citations). Pass `--static` for submission-safe output |
-| `/paper-rewrite <file> [instructions] [--static]` | Rewrite anti-AI + add citations. Same `--live`/`--static` flag |
+| `/paper-write <description> [--output path] [--no-live\|--static]` | Generate text from a description. Default is live (Word-native citations). Pass `--no-live`/`--static` for any-editor output |
+| `/paper-rewrite <file> [instructions] [--no-live\|--static]` | Rewrite anti-AI + add citations. Same live/`--no-live` flag |
 | `/paper-cite <file> [--strict] [instructions]` | Add citations to existing draft. Pass `--strict` to forbid rewriting surrounding prose (citation-only mode) |
-| `/paper-lab` | API keys + domain + citation backend |
+| `/paper-lab` | API keys + domain + citation backend + style |
 
 ## Domains
 
@@ -98,7 +107,7 @@ or `paper-lab-export`:
 | Style | What it is | Numbered? | Example output |
 |---|---|---|---|
 | `ieee` (default) | IEEE 2006 | Yes — `[1]`, `[2]`, ... | `Y. Liu and P. Saavedra, "Cachexia in Drosophila", Disease Models & Mechanisms, vol. 15, no. 6, p. dmm049298, Jun 2022, doi: 10.1242/dmm.049298.` |
-| `vancouver` | ISO 690 - Numerical Reference (closest built-in equivalent) | Yes — `[1]`, `[2]`, ... | `Liu Y, Saavedra P. Cachexia in Drosophila. Disease Models & Mechanisms 2022;15:dmm049298. https://doi.org/10.1242/dmm.049298.` |
+| `vancouver` | ISO 690 - Numerical Reference | Yes — `[1]`, `[2]`, ... | `Liu Y, Saavedra P. Cachexia in Drosophila. Disease Models & Mechanisms 2022;15:dmm049298. https://doi.org/10.1242/dmm.049298.` |
 | `apa` | APA 7th edition (author-date) | No — `(Liu & Saavedra, 2022)` | `Liu, Y., & Saavedra, P. (2022). Cachexia in Drosophila. Disease Models & Mechanisms, 15(6), dmm049298.` |
 
 Set the default style in `/paper-lab` (or by editing
@@ -148,10 +157,7 @@ paper-lab-library sync                            # Rebuild SQLite cache
 paper-lab-library stats
 ```
 
-Auto-populating the library from `/paper-cite` is **off by default**.
-Toggle via `/paper-lab` → option 9. Off-by-default aligns with:
-"your paper's citation history stays on your machine unless you
-opt in".
+Auto-populating the library from `/paper-cite` is **not yet implemented** — entries are added manually via the CLI or via `add-from-search`. Automatic population is planned for a future release.
 
 The library uses [sql.js](https://github.com/sql-js/sql.js) (pure
 WASM SQLite, no native binding, no `node-gyp` build) for the
@@ -185,7 +191,7 @@ The `--live` flag (default in v0.7.0) produces a `.docx` with:
 - CITATION fields in the body — renumber on `Ctrl+A, F9`
 - BIBLIOGRAPHY SDT at the end — regenerates from the source list
 
-The `--static` flag produces the same output as v0.6.x: `<sup>[N]</sup>` + manual `## References` section.
+The `--static` flag produces `<sup>[N]</sup>` + manual `## References` section — works in any editor.
 
 After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install via `pi install npm:pi-paper-lab`.
 
@@ -195,7 +201,7 @@ After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install 
 - [pi](https://github.com/earendil-works/pi-coding-agent). The agent runtime this extends.
 - [Serper.dev](https://serper.dev). Google Scholar API.
 - [Exa](https://exa.ai). Neural academic search.
-- [CrossRef](https://www.crossref.org/). DOI metadata for Vancouver citation formatting.
+- [CrossRef](https://www.crossref.org/). DOI metadata for citation formatting.
 
 ## Platform
 

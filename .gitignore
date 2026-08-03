@@ -39,6 +39,9 @@ oracle-data/
 # pi-subagents root state + transcripts (sandbox-local, large, owner-specific)
 .pi-subagents/
 
+# Local pi agent state (goal transcripts, model IDs, Windows paths — owner-specific)
+.pi/
+
 # v0.7.5 (M4): local reference library. Per-project, gitignored by default.
 # Users can opt in to git-tracking per repo by removing this line and
 # adding only the metadata.json files (not papers/<id>/abstract.txt

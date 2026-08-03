@@ -69,12 +69,13 @@ test("buildSourcesXml: produces sources for each input", () => {
   assert.ok(has("<b:RefOrder>2</b:RefOrder>", xml));
 });
 
-test("buildItem1Xml: contains the b:Sources root with IEEE defaults", () => {
+test("buildItem1Xml: contains the b:Sources root with IEEE (superscript) defaults", () => {
   const xml = buildItem1Xml([{ id: 1, tag: "Ref1", title: "T", year: "2024" }]);
   assert.ok(has(`xmlns:b="http://schemas.openxmlformats.org/officeDocument/2006/bibliography"`, xml));
   assert.ok(has("<b:Sources", xml));
-  assert.ok(has(`SelectedStyle="\\IEEE2006.OfficeOnline.xsl"`, xml));
-  assert.ok(has(`StyleName="IEEE"`, xml));
+  // v0.7.6: default IEEE style is the custom superscript variant.
+  assert.ok(has(`SelectedStyle="\\IEEE2006SuperscriptOfficeOnline.xsl"`, xml));
+  assert.ok(has(`StyleName="IEEE Superscript"`, xml));
   assert.ok(has(`Version="2006"`, xml));
 });
 
@@ -143,8 +144,10 @@ test("rewriteDocumentXml: replaces <sup>[N]</sup> with CITATION SDTs", () => {
   assert.ok(sdtCount >= 3, `expected >= 3 <w:sdt> blocks, got ${sdtCount}`);
   assert.ok(has("CITATION Ref1", after));
   assert.ok(has("CITATION Ref2", after));
-  assert.ok(has("<w:t>[1]</w:t>", after));
-  assert.ok(has("<w:t>[2]</w:t>", after));
+  // v0.7.6: visible text now carries xml:space="preserve" + the Citation style.
+  assert.ok(has(">[1]</w:t>", after), "visible [1] text present");
+  assert.ok(has(">[2]</w:t>", after), "visible [2] text present");
+  assert.ok(has('<w:rStyle w:val="Citation"/>', after), "citation run uses the Citation character style");
   assert.ok(has("<w:bibliography/>", after));
   assert.ok(has("BIBLIOGRAPHY", after));
 });

@@ -508,9 +508,15 @@ export function scoreText(text: string, lex: Lexicon): ScoreResult {
       hits.push({ hit: p, category: "opener", weight: W.aiOpenerHit });
     }
   }
-  // em-dash overuse
+  // em-dash overuse — hostile-audit fix #11: the fixed `> 2` threshold
+  // flagged legitimate scientific prose (which uses em-dashes freely) and
+  // especially penalised short passages. Scale the threshold with length so
+  // a short paragraph with 3 em-dashes is no longer a "tell", while a long
+  // AI-ish passage still trips on density.
+  const words = (text.match(/\b\w+\b/g) ?? []).length || 1;
   const emdashes = (text.match(/—/g) ?? []).length;
-  if (emdashes > 2) {
+  const emThreshold = Math.max(4, Math.floor(words / 200));
+  if (emdashes > emThreshold) {
     hits.push({
       hit: `em-dash x ${emdashes}`,
       category: "emdash",
@@ -603,7 +609,75 @@ export interface SilentRewriteStats {
   flaggedVerbs: string[];
 }
 
+// === Prose-vs-code gate (hostile-audit fix #2/#5/#6) ===
+//
+// silentRewrite runs on EVERY assistant message via the message_end hook.
+// Its capitalisation regex treats `\n[ \t]+` (an indented code block) and
+// `x. y` (a dotted identifier) as sentence boundaries, corrupting code:
+//   "    const notably = 1;" → "Const = 1;"
+// This guard returns true for anything that is NOT plain prose, so the
+// rewriter no-ops on code/JSON/data and leaves it byte-identical.
+// Exported for testing.
+export function looksLikeCodeOrNonProse(text: string): boolean {
+  if (typeof text !== "string" || text.length === 0) return true;
+  // Fenced code blocks.
+  if (/```/.test(text)) return true;
+  // Indented code blocks (a line starting with 4+ spaces or a tab).
+  if (/^(?:    |\t)/m.test(text)) return true;
+  // BUG 7 fix: inline code (a backtick pair with content). silentRewrite would
+  // delete filler words / avoided verbs from inside `const notably = 1`,
+  // corrupting the code. Conservative: any inline code → skip the rewrite.
+  if (/`[^`\n]+`/.test(text)) return true;
+  // BUG 7 fix: markdown table rows (a line delimited by leading/trailing |).
+  // Filler words inside table cells were being deleted (| notably | → | |).
+  if (/^\s*\|.*\|\s*$/m.test(text)) return true;
+  // JSON / data-structure-looking blobs: starts with { or [ and is
+  // symbol-heavy relative to letters.
+  const t = text.trim();
+  if (/^[{[]/.test(t)) {
+    const letters = (t.match(/[a-zA-Z]/g) ?? []).length;
+    const symbols = (t.match(/[:;{}[\],()]/g) ?? []).length;
+    if (symbols > letters) return true;
+  }
+  return false;
+}
+
+// === Safe regular-verb past-tense conjugation (hostile-audit fix #3) ===
+//
+// The previous blind rule `(set out to|set about)\s+(\w+)` conjugated the
+// NEXT word assuming it was a verb, producing garbage on non-verbs:
+//   "We set out to the laboratory." → "We thed laboratory."
+//   "We aim to 5 replicates."      → "We 5ed replicates."
+//   "They set out to go home."     → "They goed home."  (irregular!)
+// Now we only conjugate words in an allowlist of regular research verbs,
+// and handle the consonant+y → ied case so "study/quantify/identify" work.
+const CONJUGATE_VERBS = new Set([
+  "investigate", "examine", "analyze", "characterize", "determine",
+  "measure", "test", "assess", "evaluate", "compare", "isolate", "image",
+  "segment", "score", "dissect", "map", "profile", "screen", "validate",
+  "confirm", "establish", "explore", "define", "generate", "obtain",
+  "collect", "record", "monitor", "track", "follow", "sequence", "clone",
+  "express", "label", "stain", "fix", "section", "calculate", "compute",
+  "estimate", "model", "simulate", "visualize", "illustrate", "demonstrate",
+  "show", "reveal", "uncover", "discover", "detect", "observe", "study",
+  "quantify", "identify", "classify", "specify", "purify", "assemble",
+]);
+
+function conjugateRegularPast(verb: string): string | null {
+  const v = verb.toLowerCase();
+  if (!CONJUGATE_VERBS.has(v)) return null;
+  if (/[^aeiou]y$/.test(v)) return v.slice(0, -1) + "ied"; // study→studied
+  if (v.endsWith("e")) return v + "d";                    // measure→measured
+  return v + "ed";                                         // test→tested
+}
+
 export function silentRewrite(text: string, lex: Lexicon): { text: string; stats: SilentRewriteStats } {
+  // Hostile-audit fix #2/#5: never rewrite code/JSON/data — the
+  // capitalisation + filler rules corrupt indented code blocks and dotted
+  // identifiers. Bail out byte-identical instead.
+  if (looksLikeCodeOrNonProse(text)) {
+    return { text, stats: { connectors: 0, fillers: 0, verbs: 0, flaggedVerbs: [] } };
+  }
   let out = text;
   const stats: SilentRewriteStats = {
     connectors: 0,
@@ -757,20 +831,24 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
     (_full, boundary, ws, ch) => `${boundary}${ws}${ch.toUpperCase()}`,
   );
 
-  // === Article agreement fix (N1 fix) ===
+  // === Article agreement fix (N1 fix; hostile-audit fix #7: skip acronyms) ===
   // After noun replacements ("intricate"→"detailed", "novel"→"", etc.) the
   // preceding article may now be wrong: "An detailed" → "A detailed",
   // "A intricate" → "An intricate". We rebuild the article by vowel test
-  // on the first letter of the following word.
+  // on the first letter of the following word. BUT the vowel-LETTER test
+  // is wrong for acronyms pronounced by letter ("a URL", "an MRI" have
+  // consonant sounds), so we leave all-caps acronyms untouched rather than
+  // over-correct them.
   out = out.replace(
-    /\b([Aa])(n?)\s+([a-zA-Z])/g,
-    (_full, a, n, firstLetter) => {
+    /\b([Aa])(n?)\s+([A-Za-z]+)/g,
+    (_full, a, n, word) => {
+      if (/^[A-Z]{2,6}$/.test(word)) return _full; // acronym — leave as-is
+      const firstLetter = word[0];
       const isVowel = /^[aeiouAEIOU]/.test(firstLetter);
       const needAn = isVowel;
       const hasAn = n.length > 0;
-      if (needAn === hasAn) return `${a}${n} ${firstLetter}`;
-      // Flip n. Keep the case of "A"/"a" as-is.
-      return `${a}${needAn ? "n" : ""} ${firstLetter}`;
+      if (needAn === hasAn) return `${a}${n} ${word}`;
+      return `${a}${needAn ? "n" : ""} ${word}`;
     },
   );
 
@@ -783,10 +861,15 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
     stats.connectors++;
     return "set out to";
   });
-  // "set out to <verb>" → past tense for v0.2 polish
+  // "set out to <verb>" → past tense for v0.2 polish.
+  // Hostile-audit fix #3: only conjugate words in CONJUGATE_VERBS so we never
+  // produce garbage like "We thed laboratory" / "They goed home". Unknown
+  // following words are left in place (the phrase stays grammatical).
   out = out.replace(/\b(set out to|set about)\s+(\w+)/gi, (_full, _prep, verb) => {
+    const past = conjugateRegularPast(verb);
+    if (past === null) return _full; // not a known regular verb — don't mangle
     stats.connectors++;
-    return verb.endsWith("e") ? `${verb}d` : `${verb}ed`;
+    return past;
   });
   // "may suggest" / "could indicate" — rewrite to observation language.
   // Use the "that"-preserving form first so the resulting sentence is grammatically
@@ -808,19 +891,26 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
     },
   );
   // "Our findings suggest" → "We observed" inside Results only — we apply heuristic.
-  out = out.replace(/\b(our findings|the data)\s+suggest(s|ed)?\b/gi, (m) => {
+  // Hostile-audit fix #4: preserve sentence-start capitalisation (the
+  // capitalisation pass already ran above, so a lowercase "we" at the
+  // start of a sentence would never be re-capped).
+  out = out.replace(/\b(our findings|the data)\s+suggest(s|ed)?\b/gi, (match) => {
     stats.connectors++;
-    return "we observed";
+    const rep = "we observed";
+    return match[0] === match[0].toUpperCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
   });
-  // "These findings suggest" → keep but lower-tense claim
-  out = out.replace(/\bthese findings\s+(suggest|indicate|imply)\b/gi, (m, verb) => {
+  // "These findings suggest" → keep but lower-tense claim (preserve case).
+  out = out.replace(/\bthese findings\s+(suggest|indicate|imply)\b/gi, (match) => {
     stats.connectors++;
-    return `these findings are consistent with`;
+    const rep = "these findings are consistent with";
+    return match[0] === match[0].toUpperCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
   });
   // "We aim to investigate" → "We investigated" (Drosophila writing is direct).
+  // Hostile-audit fix #3: gated on the verb allowlist (same reason as above).
   out = out.replace(/\bwe aim to\s+(\w+)/gi, (_full, verb) => {
+    const past = conjugateRegularPast(verb);
+    if (past === null) return _full;
     stats.connectors++;
-    const past = verb.endsWith("e") ? `${verb}d` : `${verb}ed`;
     return `we ${past}`;
   });
   out = out.replace(/\bin this paper,?\s*we\b/gi, () => {

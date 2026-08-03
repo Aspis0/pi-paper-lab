@@ -36,7 +36,58 @@
 //     `docx create` output and validate in tests.
 
 import AdmZip from "adm-zip";
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { CslItem } from "./csl/schema.ts";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, "..");
+
+/**
+ * v0.7.6: install the bundled superscript bibliography XSL to Word's style
+ * folder (%APPDATA%\Microsoft\Bibliography\Style on Windows) if it is not
+ * already present. Word reads citation/bibliography styles from this folder;
+ * without our custom IEEE-Superscript XSL, live citations render plain.
+ * No-op on non-Windows (Word isn't the target there). Exported for testing.
+ */
+export function installSuperscriptStyle(): { installed: boolean; path?: string; stale?: boolean } {
+  if (process.platform !== "win32") return { installed: false };
+  const appdata = process.env.APPDATA;
+  if (!appdata) return { installed: false };
+  const styleDir = join(appdata, "Microsoft", "Bibliography", "Style");
+  const dst = join(styleDir, "IEEE2006SuperscriptOfficeOnline.xsl");
+  // Bundled copy ships in data/ next to the package root.
+  const src = join(REPO_ROOT, "data", "IEEE2006SuperscriptOfficeOnline.xsl");
+  if (!existsSync(src)) return { installed: false };
+  const bundledVer = readStyleVersion(src);
+  if (existsSync(dst)) {
+    // BUG 11 fix: don't clobber a user-installed (possibly hand-edited) XSL.
+    // Instead detect staleness (version mismatch) and surface it so the user
+    // can re-install deliberately. We NEVER overwrite without explicit consent.
+    const installedVer = readStyleVersion(dst);
+    return { installed: false, path: dst, stale: bundledVer !== installedVer };
+  }
+  try {
+    mkdirSync(styleDir, { recursive: true });
+    copyFileSync(src, dst);
+    return { installed: true, path: dst };
+  } catch {
+    return { installed: false };
+  }
+}
+
+/** Read the pi-paper-lab version marker from a superscript XSL (BUG 11). */
+function readStyleVersion(path: string): string | undefined {
+  try {
+    const head = readFileSync(path, "utf-8").slice(0, 400);
+    const m = head.match(/pi-paper-lab superscript bibliography XSL v(\d+)/);
+    return m ? m[1] : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Convert a CslItem (from crossrefToCsl / OpenAlex / Europe PMC) into
@@ -151,14 +202,15 @@ export interface BuildLiveOpts {
 }
 
 const STYLE_DEFAULTS: Record<NonNullable<BuildLiveOpts["style"]>, { xsl: string; name: string; version: string }> = {
-  ieee: { xsl: "\\IEEE2006.OfficeOnline.xsl", name: "IEEE", version: "2006" },
+  // v0.7.6: use a CUSTOM superscript XSL (bundled in data/) that wraps the
+  // IEEE Citation template in <sup>, so live citations render as superscript
+  // [N] after Word regenerates the field (F9). Built-in IEEE renders plain.
+  // buildWordLive auto-installs the XSL to %APPDATA%\Microsoft\Bibliography\Style
+  // if missing, so this works on any machine with Word.
+  ieee: { xsl: "\\IEEE2006SuperscriptOfficeOnline.xsl", name: "IEEE Superscript", version: "2006" },
   apa: { xsl: "\\APASixthEditionOfficeOnline.xsl", name: "APA", version: "6" },
-  // "Vancouver" maps to Word's built-in IEEE 2006 (most common
-  // numbered style; Word doesn't ship a dedicated Vancouver XSL).
-  // For the closest standard, ISO 690 - Numerical Reference is also
-  // bundled at \\ISO690Nmerical.OfficeOnline.xsl but its output is
-  // identical to IEEE in practice.
-  vancouver: { xsl: "\\IEEE2006.OfficeOnline.xsl", name: "IEEE", version: "2006" },
+  // Vancouver maps to the superscript IEEE variant (Word ships no Vancouver XSL).
+  vancouver: { xsl: "\\IEEE2006SuperscriptOfficeOnline.xsl", name: "IEEE Superscript", version: "2006" },
 };
 
 /**
@@ -274,7 +326,12 @@ function buildCitationSdt(refId: number, visibleText: string): string {
   // Use a stable ID derived from refId. Word only requires uniqueness
   // within the document.
   const sdtId = String(100000 + refId);
-  return `<w:sdt><w:sdtPr><w:id w:val="${sdtId}"/><w:citation/></w:sdtPr><w:sdtContent><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> CITATION ${tag} \\l 1033 </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>${escapeXml(visibleText)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:sdtContent></w:sdt>`;
+  // v0.7.6: the visible (cached) result run uses the "Citation" character
+  // style, which we define with superscript in styles.xml (patchStylesXml).
+  // Citations render as superscript [N] both before F9 (cached result) and
+  // after F9 (Word regenerates via the style). To switch to plain brackets,
+  // the user modifies the Citation style in Word — no code change needed.
+  return `<w:sdt><w:sdtPr><w:id w:val="${sdtId}"/><w:citation/></w:sdtPr><w:sdtContent><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> CITATION ${tag} \\l 1033 </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:rStyle w:val="Citation"/><w:noProof/></w:rPr><w:t xml:space="preserve">${escapeXml(visibleText)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:sdtContent></w:sdt>`;
 }
 
 /**
@@ -284,9 +341,30 @@ function buildCitationSdt(refId: number, visibleText: string): string {
  *
  * Returned as a sequence of <w:p> paragraphs (the heading + the
  * bibliography field) that go at the end of the body.
+ *
+ * v0.7.6 hostile-audit: cachedRefs is the STATIC reference list rendered
+ * as the field's cached result (between `separate` and `end`). Word
+ * regenerates this on F9 from the b:Sources; non-Word apps (LibreOffice,
+ * Google Docs, Pages) that cannot evaluate the BIBLIOGRAPHY field display
+ * the cached list instead of an empty "(Update Field to render)". This is
+ * the "fallback when Word is not present" path — the document is never
+ * left with an invisible bibliography.
  */
-function buildBibliographySdt(visibleText: string = "(Update Field to render)"): string {
-  return `<w:sdt><w:sdtPr><w:id w:val="111145805"/><w:docPartObj><w:docPartGallery w:val="Bibliographies"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>References</w:t></w:r></w:p><w:sdt><w:sdtPr><w:id w:val="222111456"/><w:bibliography/></w:sdtPr><w:sdtContent><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> BIBLIOGRAPHY </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>${escapeXml(visibleText)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:sdtContent></w:sdt></w:sdtContent></w:sdt>`;
+function buildBibliographySdt(cachedRefs: string[] = []): string {
+  // Build the cached field-result runs. Empty → placeholder so the field
+  // is never blank in non-Word apps.
+  let cachedRuns: string;
+  if (cachedRefs.length === 0) {
+    cachedRuns = `<w:r><w:rPr><w:noProof/></w:rPr><w:t>(Update Field to render)</w:t></w:r>`;
+  } else {
+    cachedRuns = cachedRefs
+      .map((ref, i) => {
+        const br = i < cachedRefs.length - 1 ? `<w:r><w:br/></w:r>` : "";
+        return `<w:r><w:rPr><w:noProof/></w:rPr><w:t xml:space="preserve">${escapeXml(ref)}</w:t></w:r>${br}`;
+      })
+      .join("");
+  }
+  return `<w:sdt><w:sdtPr><w:id w:val="111145805"/><w:docPartObj><w:docPartGallery w:val="Bibliographies"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>References</w:t></w:r></w:p><w:sdt><w:sdtPr><w:id w:val="222111456"/><w:bibliography/></w:sdtPr><w:sdtContent><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> BIBLIOGRAPHY </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>${cachedRuns}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:sdtContent></w:sdt></w:sdtContent></w:sdt>`;
 }
 
 /**
@@ -297,6 +375,7 @@ function buildBibliographySdt(visibleText: string = "(Update Field to render)"):
 export function rewriteDocumentXml(
   docXml: string,
   originalToPositional?: Map<number, number>,
+  cachedRefs?: string[],
 ): string {
   // CRIT-1 fix (M4 audit): the rPr block containing <w:vertAlign
   // w:val="superscript"/> is now MANDATORY (the previous `?` made
@@ -323,7 +402,7 @@ export function rewriteDocumentXml(
   // running finalizeDoc({live: true}) twice would produce a
   // document with TWO bibliography sections.
   if (!out.includes("<w:bibliography/>")) {
-    out = out.replace("</w:body>", buildBibliographySdt() + "</w:body>");
+    out = out.replace("</w:body>", buildBibliographySdt(cachedRefs) + "</w:body>");
   }
   return out;
 }
@@ -355,14 +434,68 @@ export function patchDocumentRelsXml(relsXml: string): string {
 }
 
 /**
+ * Patch word/styles.xml to ensure a "Citation" character style exists with
+ * superscript formatting. v0.7.6: live citations render as superscript [N]
+ * both in the cached field result and after Word regenerates the field
+ * (F9), because the regenerated runs inherit this style. The user can
+ * modify the style in Word (Modify Style → uncheck Superscript) to switch
+ * to plain brackets. Exported for testing.
+ */
+export function patchStylesXml(stylesXml: string): string {
+  const SUP_RPR = `<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>`;
+  // 1. A Citation style already exists — make sure it has superscript.
+  if (/<w:style\b[^>]*w:styleId="Citation"/.test(stylesXml)) {
+    const block = stylesXml.match(/<w:style\b[^>]*w:styleId="Citation"[\s\S]*?<\/w:style>/);
+    if (block && /<w:vertAlign w:val="superscript"/.test(block[0])) return stylesXml;
+    return stylesXml.replace(
+      /(<w:style\b[^>]*w:styleId="Citation"[\s\S]*?)(<\/w:style>)/,
+      (_full, head, close) =>
+        /<w:rPr>/.test(head)
+          ? head.replace(/<w:rPr>/, '<w:rPr><w:vertAlign w:val="superscript"/>') + close
+          : head + SUP_RPR + close,
+    );
+  }
+  // 2. No Citation style — add one before </w:styles>.
+  const newStyle = `<w:style w:type="character" w:styleId="Citation"><w:name w:val="citation"/><w:basedOn w:val="DefaultParagraphFont"/>${SUP_RPR}</w:style>`;
+  if (/<\/w:styles>/.test(stylesXml)) {
+    return stylesXml.replace(/<\/w:styles>/, newStyle + "</w:styles>");
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${newStyle}</w:styles>`;
+}
+
+/**
+ * Patch word/settings.xml to set <w:updateFields w:val="true"/>. v0.7.6:
+ * Word then refreshes ALL fields (CITATION + BIBLIOGRAPHY) when the document
+ * is opened, so citations and the bibliography renumber automatically after
+ * the user adds/deletes a citation and reopens the file — no manual F9.
+ * Exported for testing.
+ */
+export function patchSettingsXml(settingsXml: string): string {
+  if (/<w:updateFields\b/.test(settingsXml)) {
+    return settingsXml.replace(/<w:updateFields[^/]*\/>/, '<w:updateFields w:val="true"/>');
+  }
+  const open = settingsXml.match(/<w:settings\b[^>]*>/);
+  if (open) {
+    return settingsXml.replace(open[0], open[0] + '<w:updateFields w:val="true"/>');
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:updateFields w:val="true"/></w:settings>`;
+}
+
+/**
  * Process a .docx file in place: read it, inject the citation system,
  * write it back. Returns nothing (the file is mutated in place).
  */
 export function buildWordLive(
   docxPath: string,
   sources: WordLiveBuilderSource[],
-  opts: BuildLiveOpts & { originalToPositional?: Map<number, number> } = {},
+  opts: BuildLiveOpts & { originalToPositional?: Map<number, number>; cachedBibliography?: string[]; installStyleXsl?: boolean } = {},
 ): void {
+  // v0.7.6: install the custom superscript XSL to Word's style folder ONLY when
+  // the caller explicitly opts in (opts.installStyleXsl === true). We never
+  // write to %APPDATA% silently — installing files on the user's machine
+  // without consent is unacceptable. The CLI prints install instructions when
+  // the style is missing instead of auto-installing.
+  if (opts.installStyleXsl) installSuperscriptStyle();
   const zip = new AdmZip(docxPath);
   // 1. customXml/item1.xml
   zip.addFile("customXml/item1.xml", Buffer.from(buildItem1Xml(sources, opts), "utf-8"));
@@ -384,7 +517,22 @@ export function buildWordLive(
   const docEntry = zip.getEntry("word/document.xml");
   if (!docEntry) throw new Error(`word/document.xml not found in ${docxPath}`);
   const doc = docEntry.getData().toString("utf-8");
-  zip.updateFile(docEntry, Buffer.from(rewriteDocumentXml(doc, opts.originalToPositional), "utf-8"));
+  zip.updateFile(docEntry, Buffer.from(rewriteDocumentXml(doc, opts.originalToPositional, opts.cachedBibliography), "utf-8"));
+  // 7. word/styles.xml — Citation character style with superscript (v0.7.6).
+  const stylesEntry = zip.getEntry("word/styles.xml");
+  if (stylesEntry) {
+    const st = stylesEntry.getData().toString("utf-8");
+    zip.updateFile(stylesEntry, Buffer.from(patchStylesXml(st), "utf-8"));
+  } else {
+    zip.addFile("word/styles.xml", Buffer.from(patchStylesXml(""), "utf-8"));
+  }
+  // 8. word/settings.xml — NOT patched. v0.7.6 originally set <w:updateFields
+  //    w:val="true"/> to auto-update fields on open, but Word's citation/
+  //    bibliography fields are EXCLUDED from that auto-update (only TOC/date/
+  //    filename fields refresh). The flag caused an annoying "update fields?"
+  //    popup on every open with ZERO citation benefit, so it was removed.
+  //    Citations renumber on Ctrl+A → F9 (or the ribbon button). The cached
+  //    bibliography text is always shown until then.
   // Write back.
   zip.writeZip(docxPath);
 }

@@ -52,12 +52,18 @@ const ROOT = join(__dirname, "..");
 // bin/finalize.mjs (always present after `pi install npm:pi-paper-lab`).
 function finalizeCommand(targetPath: string): string {
   const target = JSON.stringify(targetPath); // safe quoting for spaces/special chars
-  // Single shell pipeline that works on bash, Git Bash, and PowerShell-via-Cmd:
-  //   1. Try `command -v paper-lab-finalize` first (PATH lookup).
-  //   2. Else fall back to the well-known install location under .pi/agent.
-  //   3. Else fall back to npx (will fetch from npm registry if absent).
+  // Prefer the *host agent dir* (Paperlab Studio sets PI_CODING_AGENT_DIR to
+  // %APPDATA%/PaperlabStudio/agent with a vendored copy). Never require the
+  // user's coding ~/.pi profile or a network npx fetch for the product path.
+  // Order:
+  //   1. $PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab (Paperlab closed)
+  //   2. paper-lab-finalize on PATH (optional)
+  //   3. legacy ~/.pi install (dev only)
+  //   4. npx last resort (dev only; avoid in packaged Paperlab)
   return [
-    `if command -v paper-lab-finalize >/dev/null 2>&1; then`,
+    `if [ -n "$PI_CODING_AGENT_DIR" ] && [ -f "$PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ]; then`,
+    `  node "$PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ${target}`,
+    `elif command -v paper-lab-finalize >/dev/null 2>&1; then`,
     `  paper-lab-finalize ${target}`,
     `elif [ -f "$HOME/.pi/agent/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ]; then`,
     `  node "$HOME/.pi/agent/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ${target}`,
@@ -73,7 +79,7 @@ function finalizeCommand(targetPath: string): string {
 // 2. Replace bare [N] / <sup>[N]</sup> in text with [N](doi:...)
 // 3. Strip the References section (finalizeDoc will regenerate it)
 // This PRESERVES old citations so new text can be added without losing them.
-function cleanExtractedDocx(text: string): string {
+export function cleanExtractedDocx(text: string): string {
   let cleaned = text;
 
   // 1. Extract the References section (any heading format)
@@ -84,23 +90,36 @@ function cleanExtractedDocx(text: string): string {
   if (refsMatch) {
     const refsText = refsMatch[1];
     // Parse each reference line: "N. Authors. Title. Journal. Year. doi:10.xxxx"
-    const refLines = refsText.split(/\n\n+/);
+    // Split on one-or-more newlines so we recover entries whether the docx
+    // read-back preserved single or double line breaks. Each Vancouver
+    // reference is a single line in the format finalizeDoc writes.
+    const refLines = refsText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
     for (const line of refLines) {
-      const numMatch = line.match(/^\s*(\d+)\.\s/);
-      // Match angle-bracket form first (handles parens correctly).
-      const angleMatch = line.match(/<doi:\s*([\w./\-()]+?)\s*>/i);
-      let doiMatch = null;
+      // Accept both "[N] Author..." (what finalizeDoc writes) and the legacy
+      // "N. Author..." form.
+      const numMatch = line.match(/^\s*(?:\[(\d+)\]|(\d+)\.)\s/);
+      const num = numMatch ? (numMatch[1] ?? numMatch[2]) : null;
+      // Angle-bracket or https form — captures full DOI including internal
+      // parentheses (e.g. 10.1016/S1470-2045(10)70218-7).
+      const angleMatch = line.match(/<doi:\s*(10\.[^\s>]+?)\s*>/i)
+        ?? line.match(/https?:\/\/(?:dx\.)?doi\.org\/(10\.[^\s>\]]+)/i);
+      let doi = null;
       if (angleMatch) {
-        doiMatch = angleMatch[1].replace(/[\s,;.<>]+$/, "");
+        doi = angleMatch[1].replace(/[\s,;.<>]+$/, "");
       } else {
-        // Plain form `[N](doi:10.x/...)` — documented limitation: parens
-        // in DOI are truncated at the first `)`. We match until the
-        // first whitespace, `)`, `]`, or end-of-string.
-        const plainMatch = line.match(/doi:\s*([^\s)\]]+)/i);
-        doiMatch = plainMatch ? plainMatch[1] : null;
+        // Plain form `doi:10.x/...` — match `10.` plus everything up to the
+        // first whitespace or `]`, preserving internal parentheses in real
+        // DOIs (a DOI never contains a space and stops at line end). This
+        // fixes the previous truncation at `)` that dropped paren-DOIs.
+        const plainMatch = line.match(/doi:\s*(10\.[^\s\]]+)/i);
+        // BUG 5 fix: strip trailing punctuation (period/comma) the regex captures
+        // when a DOI ends a sentence — otherwise CrossRef lookup 404s.
+        doi = plainMatch ? plainMatch[1].replace(/[\s,;.<>]+$/, "") : null;
       }
-      if (numMatch && doiMatch) {
-        doiMap.set(parseInt(numMatch[1]), doiMatch[1]);
+      // Previous code indexed `doiMatch[1]` on a STRING (returning its 2nd
+      // character) — use the resolved DOI directly.
+      if (num && doi) {
+        doiMap.set(parseInt(num), doi);
       }
     }
   }
@@ -110,21 +129,100 @@ function cleanExtractedDocx(text: string): string {
   cleaned = cleaned.replace(/\n*#{1,3}\s*References[\s\S]*$/i, "");
   cleaned = cleaned.replace(/\n*---+\n*\*{0,2}References\*{0,2}[\s\S]*$/i, "");
 
-  // 3. Replace <sup>[N]</sup> → [N](doi:...) if we have the DOI, else just [N]
+  // 3. Replace <sup>[N]</sup> → [N](<doi:...>) if we have the DOI, else just [N].
+  // Hostile-audit fix #1: emit the ANGLE-BRACKET form so the main
+  // finalizeDoc regex (which uses `[^)>\n]+` for the plain form and would
+  // truncate parenthesised DOIs at the first `)`) can capture the full DOI.
+  // The angle form `<doi:...>` is delimited by `>` and is unambiguous.
   cleaned = cleaned.replace(/<sup>\[(\d+)\]<\/sup>/g, (m, num) => {
     const doi = doiMap.get(parseInt(num));
-    return doi ? `[${num}](doi:${doi})` : `[${num}]`;
+    return doi ? `[${num}](<doi:${doi}>)` : `[${num}]`;
   });
 
-  // 4. Replace bare [N] (not followed by '(') → [N](doi:...) if we have the DOI
+  // 4. Replace bare [N] (not followed by '(') → [N](<doi:...>) if we have the DOI
   cleaned = cleaned.replace(/\[(\d+)\](?!\()/g, (m, num) => {
     const doi = doiMap.get(parseInt(num));
-    return doi ? `[${num}](doi:${doi})` : `[${num}]`;
+    return doi ? `[${num}](<doi:${doi}>)` : `[${num}]`;
   });
 
   // 5. Clean up multiple blank lines
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
   return cleaned.trim() + "\n";
+}
+
+// === Instruction-fulfillment check (pipelineRewrite) ===
+//
+// The AI detect-rewrite loop (detectRewriteLoop) only measures AI-tells
+// (burstiness, hedging, lexicon). It CANNOT see the user's specific
+// structural/content requests. This heuristic closes that gap: it greps
+// the rewritten draft for the concrete things the user named and returns
+// a list of unmet requests. The pipeline surfaces these to the LLM exactly
+// like flagged AI sentences, so the model fixes them instead of declaring
+// "done" while the requested changes are absent.
+//
+// Heuristics are intentionally narrow — only the phrasings users actually
+// write about. Each rule requires BOTH an instruction keyword AND a
+// draft-state keyword, bounding false positives.
+export function checkInstructionFulfillment(text: string, instructions: string): string[] {
+  const warnings: string[] = [];
+  const instr = instructions.toLowerCase();
+  const lower = text.toLowerCase();
+
+  // 1. "Future directions" requested to be removed → draft must not contain it.
+  if (/future[- ]direction/.test(instr)) {
+    if (/future[- ]directions/.test(lower)) {
+      warnings.push(
+        `Your instructions ask to remove "Future directions", but the draft still contains a Future directions section/heading. Delete it (papers do not carry a future-directions list).`,
+      );
+    }
+  }
+
+  // 2. RNA-seq → replace with a blank/placeholder, not a real result.
+  if (/rna[- ]?seq/.test(instr)) {
+    const hasRealResult = /rna[- ]?seq[^.\n]*\b(is underway|will test|compared|showed|revealed|found|indicate|demonstrate|identified|analys)/i.test(text);
+    const hasPlaceholder = /rna[- ]?seq results?\s*(will be|to be)?\s*inserted here|\[rna[- ]?seq/i.test(text);
+    const wantsBlank = /blank|placeholder|leave|when available/.test(instr);
+    if (wantsBlank && hasRealResult && !hasPlaceholder) {
+      warnings.push(
+        `Your instructions ask to replace the RNA-seq result with a blank/placeholder, but the draft still contains a substantive RNA-seq finding sentence. Replace it with a placeholder such as "[RNA-seq results will be inserted here when available]".`,
+      );
+    }
+  }
+
+  // 3. First Results paragraph reads like a Methods copy.
+  // Hostile-audit fix #8: the previous rule hard-coded a few cachexia-paper
+  // phrases ("shifted to 18 °C", "n = 5 flies, ..."), so it could never fire
+  // for any other manuscript. This version is document-agnostic: it builds
+  // 6-grams from the Methods section and flags the first Results paragraph
+  // if it shares ≥2 long phrases with Methods (i.e. copy-paste, regardless
+  // of domain).
+  if (/method/.test(instr) && /(copy|duplicate|like a method|rewrite|same as method)/.test(instr)) {
+    const methods = text.match(/##\s*methods[\s\S]*?(?=##\s*(?:results|discussion))/i);
+    const results = text.match(/##\s*results[\s\S]*?(?=##\s*discussion)/i);
+    if (methods && results) {
+      const firstPara = results[0].split(/\n\n+/)[1] ?? "";
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      const mTokens = norm(methods[0]).split(" ").filter(Boolean);
+      const methodsNgrams = new Set<string>();
+      for (let i = 0; i + 6 <= mTokens.length; i++) {
+        methodsNgrams.add(mTokens.slice(i, i + 6).join(" "));
+      }
+      const fTokens = norm(firstPara).split(" ").filter(Boolean);
+      let shared = 0;
+      const seen = new Set<string>();
+      for (let i = 0; i + 6 <= fTokens.length; i++) {
+        const ng = fTokens.slice(i, i + 6).join(" ");
+        if (methodsNgrams.has(ng) && !seen.has(ng)) { shared++; seen.add(ng); }
+      }
+      if (shared >= 2) {
+        warnings.push(
+          `Your instructions note the first Results paragraph reads like a Methods copy. It still reuses method phrasing — the first Results paragraph shares ${shared} long phrases (6-word matches) with the Methods section. Rewrite it as a results-framed opening and point to Methods for the full design.`,
+        );
+      }
+    }
+  }
+
+  return warnings;
 }
 
 // === Pipeline 1: /paper-cite ===
@@ -164,8 +262,14 @@ export async function pipelineCite(
   let workPath = inputPath;
   if (/\.docx$/i.test(inputPath)) {
     const mdPath = inputPath.replace(/\.docx$/i, ".md");
-    writeFileSync(mdPath, readInputFile(inputPath), "utf-8");
-    workPath = mdPath;
+    // Prefer an existing DOI-bearing .md over re-extracting the .docx so we
+    // don't clobber the source of truth or lose already-resolved citations.
+    if (existsSync(mdPath) && /\[(\d+)\]\(<doi:/.test(readFileSync(mdPath, "utf-8"))) {
+      workPath = mdPath;
+    } else {
+      writeFileSync(mdPath, readInputFile(inputPath), "utf-8");
+      workPath = mdPath;
+    }
   }
   const text = readFileSync(workPath, "utf8");
   const existingCitations = (text.match(CITE_WITH_DOI) ?? []).length;
@@ -207,12 +311,19 @@ export async function pipelineRewrite(
   rewriteInstructions: string,
   pi: ExtensionAPI,
 ): Promise<void> {
-  // If .docx, extract to .md first
+  // If .docx, extract to .md first — BUT prefer an existing DOI-bearing .md
+  // (e.g. the one finalizeDoc was run on) so we don't clobber the source of
+  // truth with a DOI-stripped docx extraction, and so the LLM reuses the
+  // already-resolved [N](<doi:...>) markers instead of backfilling them.
   let workPath = inputPath;
   if (/\.docx$/i.test(inputPath)) {
     const mdPath = inputPath.replace(/\.docx$/i, ".md");
-    writeFileSync(mdPath, readInputFile(inputPath), "utf-8");
-    workPath = mdPath;
+    if (existsSync(mdPath) && /\[(\d+)\]\(<doi:/.test(readFileSync(mdPath, "utf-8"))) {
+      workPath = mdPath; // reuse the faithful DOI-bearing source
+    } else {
+      writeFileSync(mdPath, readInputFile(inputPath), "utf-8");
+      workPath = mdPath;
+    }
   }
   const text = readFileSync(workPath, "utf8");
   const lex = loadLexicon(ROOT);
@@ -221,15 +332,25 @@ export async function pipelineRewrite(
   const { text: rewritten, iterations, finalScore, initialScore, source } =
     await detectRewriteLoop(text, lex, { maxIterations: 3 });
 
+  // Step 1b: instruction-fulfillment check — the AI-tell loop above cannot
+  // see the USER's specific structural/content requests (e.g. "remove Future
+  // directions", "RNA-seq -> blank", "first Results paragraph is a Methods
+  // copy"). Surface any unmet instructions so the LLM fixes them, exactly
+  // like flagged AI sentences.
+  const instructionWarnings = rewriteInstructions
+    ? checkInstructionFulfillment(rewritten, rewriteInstructions)
+    : [];
+
   // If still AI after loop, identify flagged sentences for the LLM
   const finalDetection = await detectAI(rewritten, lex);
 
-  const rewrittenPath = inputPath.replace(/\.md$/, ".rewritten.md");
+  const rewrittenPath = workPath.replace(/\.md$/, ".rewritten.md");
   writeFileSync(rewrittenPath, rewritten, "utf-8");
 
   const header = [
     `=== /paper-rewrite pipeline ===`,
     `File: ${inputPath}`,
+    `Working draft: ${workPath}`,
     `Rewrite instructions: ${rewriteInstructions || "(default: anti-AI sloppy cleanup)"}`,
     ``,
     `Step 1: AI detect-rewrite loop DONE (${iterations} iterations)`,
@@ -237,12 +358,15 @@ export async function pipelineRewrite(
     `  AI score: ${initialScore}% → ${finalScore}%`,
     `  ${finalDetection.isAI ? "⚠️ Still AI-flagged — LLM must rewrite flagged sentences." : "✅ Human-like."}`,
     `  Rewritten draft: ${rewrittenPath}`,
+    instructionWarnings.length > 0
+      ? `  ⚠️ INSTRUCTION CHECK: ${instructionWarnings.length} of your specific requests appear UNMET (see below).`
+      : `  ✅ Instruction check: all detectable requests appear satisfied.`,
     ``,
     `Step 2: LLM cite-mark + batch search + citations + Word...`,
   ].join("\n");
 
   // Build prompt with flagged sentences for the LLM to rewrite
-  const flaggedInfo = finalDetection.isAI && finalDetection.flaggedSentences.length > 0
+  const aiFlaggedBlock = finalDetection.isAI && finalDetection.flaggedSentences.length > 0
     ? [
         ``,
         `WARNING: AI detection (${finalDetection.source}) still flags this text as AI-generated (${finalScore}%).`,
@@ -255,8 +379,18 @@ export async function pipelineRewrite(
         `Vary sentence length. Use specific, concrete language. Remove hedging.`,
       ].join("\n")
     : "";
+  const instructionBlock = instructionWarnings.length > 0
+    ? [
+        ``,
+        `INSTRUCTION CHECK — your rewrite instructions were NOT fully satisfied:`,
+        ...instructionWarnings.map((w, i) => `  ${i + 1}. ${w}`),
+        ``,
+        `Fix these BEFORE adding citations. They are structural/content issues, not AI-tells.`,
+      ].join("\n")
+    : "";
+  const flaggedInfo = [aiFlaggedBlock, instructionBlock].filter(Boolean).join("\n");
 
-  const prompt = buildCiteMarkPrompt(rewrittenPath, rewritten, rewriteInstructions, true);
+  const prompt = buildCiteMarkPrompt(rewrittenPath, rewritten, rewriteInstructions, true, rewriteInstructions);
   pi.sendUserMessage(`${header}${flaggedInfo}\n\n${prompt}`, { deliverAs: "followUp" });
 }
 
@@ -325,7 +459,14 @@ export async function pipelineWrite(
   // first output. The previous "paper.md inside paper-write-out/" was
   // also wrong for the same reason. Both versions required the LLM
   // to remember to pass --output. This version does NOT.
-  const outPath = resolveDefaultOutPath(description, {
+  // v0.7.6: parse --static / --no-live out of the description so the
+  // documented `/paper-write "topic" --static` flag actually flows through to
+  // the finalize step (appended as --no-live below). The flag is stripped
+  // from the description so it does not pollute the filename slug or the
+  // prompt shown to the LLM.
+  const noLive = /(?:^|\s)--(?:no-live|static)(?=\s|$)|libreoffice|google docs|apple pages/i.test(description);
+  const cleanDesc = description.replace(/\b(?:--no-live|--static)\b/gi, "").replace(/\s+/g, " ").trim();
+  const outPath = resolveDefaultOutPath(cleanDesc, {
     outputDir: opts?.outputDir,
     outputPath: opts?.outputPath,
   });
@@ -334,7 +475,7 @@ export async function pipelineWrite(
   const prompt = [
     `Write new text for a biology paper based on this description:`,
     ``,
-    `"${description}"`,
+    `"${cleanDesc}"`,
     ``,
     `Follow the domain-specific voice rules in your system prompt (species, nomenclature, reporting standards are all defined by the active domain YAML).`,
     `- Reporting: n=X per group, statistical test, p-value, effect size, 95% CI.`,
@@ -361,8 +502,9 @@ export async function pipelineWrite(
     `   CRITICAL: Each [N](<doi:...>) marker must be well-formed. Test your markers: they should be exactly "[1](<doi:10.1016/j.devcel.2015.03.001>)" with no missing parens, semicolons, or extra text.`,
     `   For each citation, call verify_citation(claim_sentence, doi) to confirm the paper actually supports the claim. If verification fails, find a different paper.`,
     `STEP 4 — FINALIZE: Run this shell command (it does bibliography + superscript + .docx automatically):`,
-    `   ${finalizeCommand(outPath.replace(/\\/g, "/"))}`,
+    `   ${finalizeCommand(outPath.replace(/\\/g, "/"))}${noLive ? " --no-live" : ""}`,
     `   If the command reports "paper-lab-finalize not installed", run \`pi install npm:pi-paper-lab\` first, then retry.`,
+    `   The .docx ships with live Word citations by default (renumber on Ctrl+A, F9); pass --no-live for a static References section if editing outside Word.`,
     `STEP 5 — REPORT: Tell the user: number of papers studied, path to study-notes.md, path to .docx. Do NOT read the .docx (binary).`,
   ].join("\n");
 
@@ -390,6 +532,12 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
   const verifyAll = /\b(?:verify|check|recheck|re-?check|ricontrolla|controlla|verifica)\b[\s\S]{0,40}\b(?:all|every|ogni|tutte|tutto|all citations|all references|le citazioni|tutte le citazioni)\b/i
     .test(userInstructions ?? "")
     || /refresh.*(?:metadata|citations|references|tutto|cache)/i.test(userInstructions ?? "");
+
+  // v0.7.6: detect "static / no-live" intent so the user can opt out of
+  // Word-native citation fields when editing in LibreOffice / Google Docs /
+  // Pages. Matches the --static / --no-live flags the README documents.
+  const noLive = /(?:^|\s)--(?:no-live|static)(?=\s|$)|libreoffice|google docs|apple pages/i
+    .test(userInstructions ?? "");
 
 
   const rewriteBlock = includeRewrite
@@ -556,8 +704,8 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
     ``,
     `━━━ FINALIZE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `Run this shell command (does bibliography + superscript + .docx automatically):`,
-    `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}${verifyAll ? " --verify-all" : ""}`,
-    `If "paper-lab-finalize not installed" appears, run \`pi install npm:pi-paper-lab\` first. Pass \`--no-cache\` to force fresh DOI resolution; pass \`--verify-all\` to re-fetch every DOI even with cache.`,
+    `   ${finalizeCommand(filePath.replace(/\\/g, "/"))}${verifyAll ? " --verify-all" : ""}${noLive ? " --no-live" : ""}`,
+    `If "paper-lab-finalize not installed" appears, run \`pi install npm:pi-paper-lab\` first. Pass \`--no-cache\` to force fresh DOI resolution; pass \`--verify-all\` to re-fetch every DOI even with cache; pass \`--no-live\` to force a static References section (for LibreOffice / Google Docs / Pages instead of Word).`,
     ``,
     `━━━ REPORT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     `Tell the user the .docx path. Do NOT read the .docx (binary).`,
@@ -607,6 +755,28 @@ export function cleanDoi(input: string): string {
     s = s.replace(/[\];,.]+$/, "");
   } while (s !== prev);
   return s.trim();
+}
+
+/**
+ * Convert a Vancouver/HTML citation string to PLAIN TEXT for embedding as a
+ * cached BIBLIOGRAPHY field result (BUG 8 fix). Vancouver strings from
+ * Citestyle carry literal HTML markup (`<i>Drosophila</i>`) and entity-encoded
+ * ampersands (`&amp;`). If we pass these straight to escapeXml, `<i>` becomes
+ * `&lt;i&gt;` and `&amp;` becomes `&amp;amp;` (double-encoded). We strip HTML
+ * tags and decode entities to plain text FIRST, so the downstream escapeXml
+ * re-encodes correctly. Exported for testing.
+ */
+export function plainTextCitation(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, "")        // strip HTML tags (<i>, </i>, <b>, ...)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")          // decode &amp; LAST (avoids &amp;lt; -> &lt; -> <)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -708,6 +878,14 @@ export function finalizeDoc(
      * machine with Word installed (M0.5 manual validation).
      */
     live?: boolean;
+    /**
+     * v0.7.6: when true, buildWordLive installs the bundled superscript
+     * bibliography XSL to %APPDATA%\Microsoft\Bibliography\Style. OPT-IN —
+     * we never write to the user's machine without explicit consent. The CLI
+     * flag is --install-style; without it, the CLI prints install instructions
+     * when --live is used and the style is missing.
+     */
+    installStyleXsl?: boolean;
     // Dependency injection for tests. Production callers omit this and the
     // real `lookupDoiSync` (which hits CrossRef) is used. Tests pass a
     // fixture-backed function to keep the suite offline.
@@ -800,7 +978,33 @@ export function finalizeDoc(
     // gets re-fetched. Use when the user wants to verify ALL citations.
     if (citations.has(num) && !verifyAll) {
       const cachedEntry = sidecar.get(num);
-      if (cachedEntry?.doi === doi) continue; // cache hit, DOI matches
+      if (cachedEntry?.doi === doi) {
+        // Cache hit for the Vancouver string. But if this is a pre-v0.7.5
+        // sidecar (no `csl` field), cslItems is missing this entry and the
+        // --live path would drop it from b:Sources — a cited-but-unsourced
+        // (broken) citation in Word. Lazily fetch the CSL once; the sidecar
+        // write at the end persists it, so subsequent runs are cache-fast.
+        if (!cslItems.has(num)) {
+          // Lazily fetch the CSL once so the sidecar is upgraded (subsequent runs
+          // are cache-fast). The resolver contract is SYNC (CrossRefWork | null),
+          // but some test mocks pass an ASYNC function whose rejection would crash
+          // the process as an unhandled rejection. Treat a Promise return (or a
+          // throw) as "CSL unavailable here" — the live source-selection falls
+          // back to parseVancouverForLive so the entry still gets a b:Source.
+          try {
+            const work = resolveDoi(doi);
+            if (work && typeof work === "object") {
+              if (typeof (work as any).then === "function") {
+                // async mock — swallow its rejection so it can't crash the process.
+                (work as Promise<unknown>).catch(() => {});
+              } else {
+                cslItems.set(num, crossrefToCsl(work as CrossRefWork, doi));
+              }
+            }
+          } catch { /* keep Vancouver-only entry; live fallback uses parseVancouverForLive */ }
+        }
+        continue; // cache hit, DOI matches
+      }
       citations.delete(num); // stale or first-time — start fresh
     } else if (verifyAll) {
       // verifyAll: drop any cached entry that was pre-populated above.
@@ -946,13 +1150,11 @@ export function finalizeDoc(
     },
   );
 
-  // 3. (no static References section — Word's BIBLIOGRAPHY field,
-  //    injected by buildWordLive via the live branch, is the single
-  //    source of truth for the bibliography. A static section would
-  //    duplicate/conflict with the field and break auto-renumbering
-  //    on Ctrl+A, F9. The "References" heading is also omitted for
-  //    the same reason — the BIBLIOGRAPHY SDT provides its own
-  //    "Bibliography" heading.)
+  // 3. Append static References section for non-live mode.
+  // In --live mode, Word's BIBLIOGRAPHY field (injected by
+  // buildWordLive) is the single source of truth — a static
+  // section would duplicate. In --static mode, we produce a
+  // plain References section that works in any editor.
 
   // v0.7.0 (M2.2): QUESTIONS FOR THE AUTHOR section at the top of the doc.
   // The LLM emitted [ASK:question] markers while writing; collect them
@@ -967,7 +1169,18 @@ export function finalizeDoc(
     text = `## Questions for the author\n\n${numbered}\n\n---\n\n` + text;
   }
 
-  // 3a. CRIT-2 fix: detect which citation numbers are actually USED in the
+  // 3a. Static mode (no --live flag): append a plain References
+  // section. In --live mode the BIBLIOGRAPHY field handles this.
+  if (opts?.live === false && citations.size > 0) {
+    const sorted = [...citations.entries()].sort((a, b) => a[0] - b[0]);
+    const lines = sorted.map(([num, raw]) => {
+      const clean = raw.replace(/^\[?\d+\]\.?\s*/, "");
+      return `[${num}] ${clean}`;
+    });
+    text += "\n\n## References\n\n" + lines.join("\n\n");
+  }
+
+  // 3b. CRIT-2 fix: detect which citation numbers are actually USED in the
   // processed text, and prune `citations` (and the sidecar write below)
   // to only those. Otherwise, if the user removed `[N]` from the prose in
   // a previous edit, the sidecar keeps it forever — and the bibliography
@@ -993,7 +1206,11 @@ export function finalizeDoc(
   text = text.replace(/^(\d+)\.\s\s+(?=\S)/gm, '$1. ');
 
   // 4. Create .docx with --force (overwrite)
-  const tempMd = markdownPath.replace(/\.md$/i, ".final.md");
+  // Hostile-audit fix #9: same no-.md guard as sidecarPathFor — never let the
+  // temp file path collapse onto the source path.
+  const tempMd = /\.md$/i.test(markdownPath)
+    ? markdownPath.replace(/\.md$/i, ".final.md")
+    : markdownPath + ".final.md";
   try {
     writeFileSync(tempMd, text, "utf-8");
   } catch (err: any) {
@@ -1003,7 +1220,7 @@ export function finalizeDoc(
     execFileSync("docx", ["create", docxPath, "--from", tempMd, "--force"], { stdio: "pipe" });
   } catch (err: any) {
     try { unlinkSync(tempMd); } catch {}
-    const detail = err?.stderr ? String(err.stderr).slice(0, 200) : err?.message;
+    const detail = err?.stderr ? String(err.stderr).slice(0, 200) : (err?.message ? String(err.message).slice(0, 200) : String(err));
     return { docxPath: "", bibliographyCount: 0, error: `docx create failed: ${detail}` };
   }
   try { unlinkSync(tempMd); } catch {}
@@ -1063,7 +1280,28 @@ export function finalizeDoc(
   // runtime behaviour (renumber on F9, source manager recognition).
   // If buildWordLive throws (bad XML, missing part), fall back to the
   // static .docx rather than fail the whole finalize.
-  if (opts?.live) {
+  //
+  // v0.7.6: live is the DEFAULT. Word native CITATION fields renumber on
+  // F9, and the bundled IEEE2006SuperscriptOfficeOnline.xsl (installed once
+  // via --install-style, with consent) makes them render as superscript [N].
+  // The BIBLIOGRAPHY field also carries the static list as its cached result,
+  // so non-Word apps (LibreOffice/Google Docs/Pages) still display a complete
+  // bibliography. Pass --no-live / --static to force the plain-text References
+  // section (e.g. for editors without Word, or when the superscript XSL is not
+  // installed).
+  //
+  // NOTE on auto-renumber: Word never auto-renumbers citation fields on
+  // delete (only Zotero/Mendeley plugins do, by intercepting edits). After
+  // deleting a [N] in the text, run Ctrl+A → F9 (or the ribbon "Update
+  // Citations & Bibliography") to renumber. This is a Word engine limit, not
+  // fixable from a .docx file.
+  // Only inject the live citation system when there is at least one citation.
+  // An empty b:Sources list would add customXml parts + a BIBLIOGRAPHY field for
+  // nothing, and Word's Source Manager would show an empty list. With zero
+  // citations we ship a plain docx (the static ## References section is also
+  // skipped when citations.size === 0 above).
+  const live = opts?.live !== false && citations.size > 0;
+  if (live) {
     try {
       // v0.7.1 fix: buildWordLive is imported statically at the top of this
       // file. The previous version used a dynamic `require("./word-live-builder.js")`
@@ -1081,43 +1319,47 @@ export function finalizeDoc(
       // that resolve DOIs populate `cslItems` directly and skip the
       // regex entirely.
       const liveSources: WordLiveBuilderSource[] = [];
-      if (cslItems.size > 0) {
-        // Preferred: structured CslItem → WordLiveBuilderSource. We
-        // re-assign 1..N by position so the b:Source list has
-        // contiguous Ref1, Ref2, Ref3, ... — this matches what
-        // Word expects from a CITATION field. Word's renumbering
-        // (Ctrl+A, F9) will then re-number the bibliography in
-        // b:Source order, which is the user-visible flow.
-        //
-        // We build a `originalToPositional` map so that the
-        // <sup>[N]</sup> markers in the prose (which carry the
-        // USER's original numbers like 1, 4, 7) get remapped to
-        // the positional ids in the CITATION fields. This way
-        // CITATION Ref4 in the prose (position 2) becomes
-        // CITATION Ref2, which resolves to the correct b:Source.
-        const orderedItems = [...cslItems.entries()].sort(
-          (a, b) => a[0] - b[0],
-        );
-        const csls = orderedItems.map(([, csl]) => csl);
-        const originalToPositional = new Map<number, number>();
-        orderedItems.forEach(([orig], i) => {
-          originalToPositional.set(orig, i + 1);
-        });
-        liveSources.push(...cslItemsToWordSources(csls));
-        // Stash the map for the buildWordLive call below.
-        (buildWordLive as any)._lastMap = originalToPositional;
-      } else {
-        // Fallback: legacy Vancouver-string parser. Only used when
-        // cslItems is empty (old sidecar, no inline DOIs). M5 cleanup
-        // removes parseVancouverForLive entirely.
-        for (const [, entry] of citations.entries()) {
-          const source = parseVancouverForLive(entry);
-          if (source) liveSources.push(source);
-          // Entries that don't match any arm are silently skipped (gap in
-          // the live bibliography). The static bibliography will still list
-          // them, so the user has a paper trail.
+      // BUG 6 fix: iterate over ALL citations (sorted), preferring the
+      // structured CslItem but FALLING BACK to parseVancouverForLive(vancouver)
+      // when cslItems is missing an entry (e.g. a pre-v0.7.5 sidecar where the
+      // lazy CrossRef fetch returned null). Previously, if ANY entry had CSL,
+      // the CslItem-only path was taken and entries without CSL were silently
+      // dropped from b:Sources — a cited-but-unsourced (broken) citation.
+      const orderedNums = [...citations.keys()].sort((a, b) => a - b);
+      const originalToPositional = new Map<number, number>();
+      const csls: CslItem[] = [];
+      const fallbackSources: WordLiveBuilderSource[] = [];
+      for (const num of orderedNums) {
+        if (cslItems.has(num)) {
+          csls.push(cslItems.get(num)!);
+        } else {
+          // No CSL — parse the Vancouver string so the entry still gets a
+          // b:Source. Include the entry if it has a real DOI, OR if it is an
+          // explicit sidecar placeholder (doi=null but the user/previous run
+          // recorded it — CRIT-2 wants those surfaced in Source Manager).
+          // EXCLUDE first-run bare markers (no sidecar, no DOI): those have no
+          // real source and the CSL-smoke expects them absent from b:Sources.
+          const source = parseVancouverForLive(citations.get(num) ?? "");
+          if (source && (source.doi || sidecar.has(num))) fallbackSources.push(source);
         }
       }
+      // Build positional sources: CSL items first (via cslItemsToWordSources,
+      // which assigns 1..N), then the fallback sources appended with continuing
+      // ids. The originalToPositional map remaps the user's [N] markers to the
+      // positional ids Word's CITATION fields expect.
+      if (csls.length > 0) {
+        liveSources.push(...cslItemsToWordSources(csls));
+      }
+      const cslCount = csls.length;
+      fallbackSources.forEach((src, i) => {
+        src.id = cslCount + i + 1;
+        src.tag = `Ref${cslCount + i + 1}`;
+        liveSources.push(src);
+      });
+      orderedNums.forEach((orig, i) => {
+        originalToPositional.set(orig, i + 1);
+      });
+      (buildWordLive as any)._lastMap = originalToPositional;
       // If the CslItem path populated a map, pass it to buildWordLive
       // so the CITATION field rewriter can remap the user's original
       // [N] markers (e.g. 1, 4, 7) to positional ids (1, 2, 3).
@@ -1139,13 +1381,21 @@ export function finalizeDoc(
         // Clear so a fallback path doesn't accidentally use it.
         (buildWordLive as any)._lastMap = undefined;
       }
+      // v0.7.6: ship the resolved reference list as the BIBLIOGRAPHY field's
+      // cached result so non-Word apps render a complete bibliography.
+      buildOpts.cachedBibliography = [...citations.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([n, v]) => `[${n}] ${plainTextCitation(v.replace(/^\[?\d+\]\.?\s*/, ""))}`);
+      // v0.7.6: only install the superscript XSL when the caller EXPLICITLY opts
+      // in. Never auto-install files to %APPDATA%.
+      buildOpts.installStyleXsl = !!opts?.installStyleXsl;
       buildWordLive(docxPath, liveSources, buildOpts);
     } catch (err: any) {
       console.error("[paper-lab-finalize] WARN: --live build failed, falling back to static:", err?.message ?? err);
     }
   }
 
-  return { docxPath, bibliographyCount: citations.size, error: undefined, liveApplied: !!opts?.live };
+  return { docxPath, bibliographyCount: citations.size, error: undefined, liveApplied: live };
 }
 
 // === Sidecar citation cache ===
@@ -1179,7 +1429,12 @@ interface SidecarFile {
 }
 
 function sidecarPathFor(markdownPath: string): string {
-  return markdownPath.replace(/\.md$/i, ".citations.json");
+  // Hostile-audit fix #9: if the path has no .md suffix, .replace is a no-op
+  // and would return the path unchanged — writing the sidecar OVER the source.
+  // Append the suffix instead.
+  return /\.md$/i.test(markdownPath)
+    ? markdownPath.replace(/\.md$/i, ".citations.json")
+    : markdownPath + ".citations.json";
 }
 
 function loadCitationSidecar(markdownPath: string): Map<number, SidecarEntry> {

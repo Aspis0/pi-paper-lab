@@ -102,7 +102,7 @@ async function loadPipeline() {
 // ── 3. CLI entry ───────────────────────────────────────────────────────
 function usageAndExit(msg) {
   if (msg) console.error("Error:", msg);
-  console.error("Usage: paper-lab-finalize <path-to.md> [--no-cache] [--verify-all] [--help] [--version]");
+  console.error("Usage: paper-lab-finalize <path-to.md> [--no-cache] [--verify-all] [--no-live|--static] [--help] [--version]");
   console.error("  --no-cache     Force fresh DOI resolution via CrossRef, ignoring any sidecar cache.");
   console.error("                 Use after manually editing the .citations.json sidecar or when");
   console.error("                 refreshing stale metadata.");
@@ -111,6 +111,17 @@ function usageAndExit(msg) {
   console.error("                 tutte le citazioni', or after errata / retractions were issued.");
   console.error("                 Bare [N] markers without DOIs still resolve from the sidecar cache if");
   console.error("                 available; the LLM pipeline fills those via the citation_search path.");
+  console.error("  --live         Inject Word-native CITATION/BIBLIOGRAPHY fields (renumber on F9 in Word).");
+  console.error("                 This is the DEFAULT. Citations render superscript [N] once the bibliography XSL");
+  console.error("                 is installed (see --install-style, run once with consent). The BIBLIOGRAPHY field");
+  console.error("                 also caches the list so non-Word apps show a complete bibliography.");
+  console.error("                 NOTE: Word never auto-renumbers on delete — run Ctrl+A → F9 after editing citations.");
+  console.error("  --no-live      Force a STATIC References section (plain <sup>[N]</sup> + text list, no Word fields).");
+  console.error("  --static       Alias for --no-live. Use for LibreOffice / Google Docs / Pages, or when you want");
+  console.error("                 a dead-simple .docx with no field-update step.");
+  console.error("  --install-style  Install the bundled superscript bibliography XSL to Word's style folder");
+  console.error("                 (%APPDATA%\\Microsoft\\Bibliography\\Style). OPT-IN only — run once, then");
+  console.error("                 --live citations render superscript. Never done automatically.");
   process.exit(2);
 }
 
@@ -124,6 +135,9 @@ async function main() {
     const a = argv[i];
     if (a === "--no-cache") opts.noCache = true;
     else if (a === "--verify-all") opts.verifyAll = true;
+    else if (a === "--no-live" || a === "--static") opts.live = false;
+    else if (a === "--live") opts.live = true;
+    else if (a === "--install-style") opts.installStyleXsl = true;
     else if (a === "-h" || a === "--help") usageAndExit();
     else if (a === "--version" || a === "-v") { /* handled below */ }
     else positional.push(a);
@@ -168,8 +182,17 @@ async function main() {
   const flagSummary = [
     opts.noCache ? "cache bypassed" : "",
     opts.verifyAll ? "all citations re-fetched" : "",
+    opts.live ? "live citations" : "",
   ].filter(Boolean).join(", ");
   console.log(`Done! Word: ${result.docxPath} | References: ${result.bibliographyCount}${flagSummary ? ` | (${flagSummary})` : ""}`);
+  // v0.7.6: live is the default. Remind the user that superscript needs the
+  // XSL installed (one-time, with consent) when they did NOT pass --install-style.
+  // We NEVER install silently — this is just a printed hint.
+  if (result.liveApplied && !opts.installStyleXsl) {
+    console.log("  → Live citations render superscript only after installing the bibliography XSL (one-time, with consent):");
+    console.log("    paper-lab-finalize --install-style <file.md>   (or re-run --live --install-style)");
+    console.log("    Without it, citations render plain (1) and renumber still works in Word via F9.");
+  }
 }
 
 main().catch((err) => {

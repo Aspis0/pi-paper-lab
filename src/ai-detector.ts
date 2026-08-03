@@ -160,6 +160,10 @@ export async function detectRewriteLoop(
     iterations++;
     // Rewrite the full text with silent_rewrite (catches all AI-tells)
     const { text: rewritten } = silentRewrite(current, lex);
+    // Hostile-audit fix #12: stop if silent_rewrite made no change — it is
+    // not idempotent (capitalisation/article fixes accumulate), so re-running
+    // it on an already-rewritten text can only drift, not improve.
+    if (rewritten === current) break;
     current = rewritten;
 
     // Re-detect

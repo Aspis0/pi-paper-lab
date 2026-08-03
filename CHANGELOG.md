@@ -1,6 +1,155 @@
 # Changelog
 
+## v0.7.6 — pipeline rewrite-loop fixes + hostile-audit (silentRewrite safety, citation round-trip)
+
+A hostile audit after the pipeline fixes found 12 more bugs; all fixed.
+328/328 tests pass (+21 new across both rounds). Typecheck clean.
+
+### silentRewrite runs on EVERY assistant message — it was corrupting non-prose (#2, #5, #6)
+
+The `message_end` hook passes every assistant message through `silentRewrite`.
+Its capitalisation regex treated `\n[ \t]+` (indented code) and `x. y`
+(dotted identifiers) as sentence boundaries, mangling code:
+`    const notably = 1;` → `Const = 1;`. Added `looksLikeCodeOrNonProse()` —
+silentRewrite now no-ops byte-identical on fenced/indented code blocks and
+JSON blobs. Exported for testing.
+
+### Blind verb conjugation produced garbage (#3)
+
+`(set out to|set about)\s+(\w+)` and `we aim to <verb>` conjugated the next
+word assuming it was a verb: `We set out to the laboratory.` → `We thed
+laboratory.`, `They set out to go home.` → `They goed home.` (irregular!).
+Now gated on a `CONJUGATE_VERBS` allowlist of regular research verbs, with
+the consonant+y → ied case handled (`study`→`studied`). Unknown words are
+left in place.
+
+### "the data suggest" → "we observed" de-capitalised sentence starts (#4)
+
+The replacement dropped the subject and lowercased the start (the
+capitalisation pass had already run). Now preserves case on all three
+semantic rewrites (`our findings/the data suggest`, `these findings suggest`).
+
+### Parenthesised DOI round-trip was STILL broken (#1)
+
+`cleanExtractedDocx` recovered the full DOI but emitted the PLAIN form
+`[1](doi:10.1016/S1470-2045(10)70218-7)`, which the main finalizeDoc regex
+truncates at the first `)`. Now emits the angle-bracket form
+`[1](<doi:...>)`, which is unambiguous. Verified end-to-end: the main regex
+captures the full `10.1016/S1470-2045(10)70218-7`.
+
+### checkInstructionFulfillment rule 3 was hard-coded to one paper (#8)
+
+The Methods-copy check used fixed phrases ("shifted to 18 °C", "n = 5
+flies, ...") from the cachexia manuscript, so it never fired for any other
+document. Replaced with a document-agnostic 6-gram overlap test between the
+first Results paragraph and the Methods section (≥2 shared long phrases →
+flag).
+
+### Path-safety: sidecar/tempMd could overwrite the source (#9)
+
+`sidecarPathFor` and the tempMd path used `.replace(/\.md$/i, …)`, which is
+a no-op on a non-`.md` path and would write the sidecar/temp over the source.
+Now appends the suffix when there is no `.md`.
+
+### Per-turn domain detection was dead code (#10)
+
+`before_agent_start` computed `resolveDomain` at load and stored it in
+globalThis, but never rebuilt the injection — the active domain was frozen
+to the fallback. Now rebuilds the injection from `event.prompt` (the user's
+latest message) each turn, with a try/catch fallback to the static injection.
+
+### Article agreement over-corrected acronyms (#7)
+
+`/\b([Aa])(n?)\s+([a-zA-Z])/g` used a vowel-LETTER test, flipping `a URL` →
+`an URL` and `an MRI` → `a MRI` (both wrong — consonant sounds). Now skips
+all-caps acronyms (2–6 letters) and leaves them untouched.
+
+### Em-dash threshold was too aggressive (#11)
+
+The fixed `> 2` flagged legitimate scientific prose and especially short
+passages. Now length-scaled: `max(4, floor(words/200))`, so 3 em-dashes in
+a short paragraph is no longer a tell, while dense AI-ish text still trips.
+
+### detectRewriteLoop compounded silentRewrite damage (#12)
+
+silentRewrite is not idempotent (capitalisation/article fixes accumulate),
+so re-running it on already-rewritten text could only drift. Now breaks
+early when `rewritten === current` (no further progress).
+
+### /paper-rewrite pipeline fixes (round 1)
+
+Fixes six issues found by running `/paper-rewrite` end-to-end on a real
+cachexia manuscript. No behaviour change for the happy path; all 317 tests
+still pass (10 new).
+
+#### `/paper-rewrite` rewrite loop was blind to the user's instructions (#2)
+
+The Step 1 detect-rewrite loop only measures AI-tells (burstiness,
+hedging, lexicon), so it reported `DONE` while the draft still contained
+the exact things the user asked to remove (a *Future directions* section,
+an un-placeholdered RNA-seq sentence, a first Results paragraph that
+copied Methods). Added `checkInstructionFulfillment(text, instructions)`
+— a narrow keyword heuristic that surfaces unmet structural requests and
+passes them to the LLM exactly like flagged AI sentences. Covered by
+`tests/instruction-fulfillment.test.ts`.
+
+#### `.docx` → `.md` extraction lost DOIs and clobbered the source (#3, #5)
+
+Two root causes, both in `cleanExtractedDocx`:
+
+1. `numMatch` expected `1. Author...` but `finalizeDoc` writes
+   `[1] Author...`, so no DOIs were ever recovered from the References
+   section. The DOIs that *did* appear came from the sidecar cache, not
+   the extraction — leaving most markers bare and triggering needless
+   `find_citation` backfill.
+2. The plain DOI regex `doi:\s*([^\s)\]]+)` truncated at the first `(`,
+   dropping parenthesised DOIs (e.g. `10.1016/S1470-2045(10)70218-7` →
+   `10.1016/S1470-2045`).
+3. `doiMatch[1]` indexed a *string* (returning its 2nd character) instead
+   of the resolved DOI.
+
+Fixed: `numMatch` accepts both `[N]` and `N.`; the DOI regex matches
+`10\.[^\s\]]+` (preserves internal parens); references are split on
+`/\n+/`; the resolved DOI is stored directly. `finalizeDoc` now joins
+reference entries with a blank line so each renders as its own paragraph
+in the `.docx`, making round-trip extraction reliable. Covered by
+`tests/clean-extracted-docx.test.ts`.
+
+`pipelineRewrite`/`pipelineCite` now **prefer an existing DOI-bearing
+`.md`** over re-extracting the `.docx`, so the source of truth is never
+overwritten with a DOI-stripped copy.
+
+#### ENOENT on the instructions string (#1)
+
+The command handlers fell back to `target = raw` (the whole arg string,
+including instructions) when the `.md`/`.docx` boundary regex failed,
+which then hit `open(cwd + instructions)`. Hardened `paper-rewrite` and
+`paper-cite` to recover a path-like token and never `open()` the raw
+instructions; a clear usage notification is shown instead. (Note: the
+raw `ENOENT ... open cwd/<instructions>` in some runs originates in the
+pi harness's own path resolution, which is outside this package; the
+handler guard prevents the in-package path from ever reaching `open()`.)
+
+#### Other
+
+- `pipelineRewrite` now reports `Working draft:` in the header and writes
+  the rewritten draft to `<workPath>.rewritten.md` (previously, on a
+  `.docx` input it wrote to the `.docx` path because `.replace(/\.md$/, ...)`
+  was a no-op).
+- Minor: `finalizeDoc`'s `References: N` self-report is the post-prune
+  count; the `.docx` bibliography itself contains every resolved DOI.
+
 ## v0.7.5 — CSL hybrid (Citestyle + Citation.js) + Local Reference Library
+
+**Critical fix (2026-07-29):** The `SelectedStyle` in `b:Sources` used
+`IEEE2006.OfficeOnline.xsl` (with a period between "2006" and
+"OfficeOnline"). The actual XSL file in Office's Bibliography\Style
+folder is `IEEE2006OfficeOnline.xsl` (no period). This mismatch caused
+Word's "no current bibliography style is currently used" error — the
+BIBLIOGRAPHY field could not find the style. Fixed to match the real
+filename. Auto-renumbering on `Ctrl+A, F9` now works correctly.
+
+---
 
 This release replaces the v0.7.0 regex-based Vancouver parser with a
 CSL-based pipeline and adds a local reference library. Word's

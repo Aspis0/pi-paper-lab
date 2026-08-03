@@ -49,8 +49,22 @@ export default function (pi: ExtensionAPI) {
 
   // === 1. Inject domain-specific voice into the system prompt on every turn ===
   pi.on("before_agent_start", async (event, _ctx) => {
+    // Hostile-audit fix #10: actually use per-turn domain detection. The
+    // previous version computed `resolveDomain` at load and stored it in
+    // globalThis, but never rebuilt the injection — so the active domain was
+    // frozen to the fallback. `event.prompt` is the user's latest message,
+    // which is exactly what we want to detect the domain from.
+    let inj = injection;
+    try {
+      if (event.prompt) {
+        const dom = resolveDomain(event.prompt);
+        if (dom) inj = buildSystemInjection(lex, dom);
+      }
+    } catch {
+      // Domain detection must never break the turn — fall back to static.
+    }
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${injection}`,
+      systemPrompt: `${event.systemPrompt}\n\n${inj}`,
     };
   });
 
@@ -89,11 +103,20 @@ export default function (pi: ExtensionAPI) {
       const raw = args.trim().replace(/["']/g, "");
       // Parse --strict flag (anywhere in args)
       const strict = /\B--strict\b/.test(raw);
-      // Strip --strict and split at .md or .docx boundary
+      // Strip --strict and split at .md or .docx boundary. Case-insensitive
+      // so .DOCX inputs still resolve.
       const cleaned = raw.replace(/\B--strict\b/g, "").trim();
-      const m = cleaned.match(/^(.+?\.(?:md|docx))\s*(.*)$/s);
-      const target = m ? m[1] : cleaned;
-      const instructions = m ? m[2] : "";
+      const m = cleaned.match(/^(.+?\.(?:md|docx))\s*(.*)$/is);
+      let target = m ? m[1] : "";
+      let instructions = m ? m[2] : cleaned;
+      // Fallback: if no file boundary was found, search the arg string for a
+      // token that looks like a file path so we never try to `open()` the raw
+      // instructions (that produced the ENOENT "open cwd/<instructions>" bug).
+      if (!target) {
+        const pathMatch = cleaned.match(/(?:[^\s"']+\.(?:md|docx))|(?:[A-Za-z]:[\\/][^\s"']+)|(?:\.\.?\/[^\s"']+)/);
+        target = pathMatch ? pathMatch[0] : "";
+        if (target) instructions = cleaned.replace(target, "").trim();
+      }
       if (!target) {
         ctx.ui.notify("Usage: /paper-cite <file-path.md> [--strict] [cite instructions...]", "warning");
         return;
@@ -112,10 +135,19 @@ export default function (pi: ExtensionAPI) {
     description: "Same as /paper-cite, but first rewrites the draft to remove AI-tells and sloppy writing. Add your rewrite instructions after the file path. Usage: /paper-rewrite <file.md> [rewrite instructions...]",
     handler: async (args, ctx) => {
       const raw = args.trim().replace(/["']/g, "");
-      // Split at .md or .docx boundary — everything after is instructions
-      const m = raw.match(/^(.+?\.(?:md|docx))\s*(.*)$/s);
-      const target = m ? m[1] : raw;
-      const instructions = m ? m[2] : "";
+      // Split at .md or .docx boundary — everything after is instructions.
+      // Case-insensitive so .DOCX inputs still resolve.
+      const m = raw.match(/^(.+?\.(?:md|docx))\s*(.*)$/is);
+      let target = m ? m[1] : "";
+      let instructions = m ? m[2] : raw;
+      // Fallback: if no file boundary was found, search the arg string for a
+      // token that looks like a file path so we never try to `open()` the raw
+      // instructions (that produced the ENOENT "open cwd/<instructions>" bug).
+      if (!target) {
+        const pathMatch = raw.match(/(?:[^\s"']+\.(?:md|docx))|(?:[A-Za-z]:[\\/][^\s"']+)|(?:\.\.?\/[^\[\s"']+)/);
+        target = pathMatch ? pathMatch[0] : "";
+        if (target) instructions = raw.replace(target, "").trim();
+      }
       if (!target) {
         ctx.ui.notify("Usage: /paper-rewrite <file-path.md> [rewrite instructions...]", "warning");
         return;
