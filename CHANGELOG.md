@@ -5,6 +5,44 @@
 A hostile audit after the pipeline fixes found 12 more bugs; all fixed.
 328/328 tests pass (+21 new across both rounds). Typecheck clean.
 
+### AI detector recalibration (density + MATTR; threshold 40 → 30)
+
+Measured against 24 open-access scientific papers published 2018–2020
+(pre-ChatGPT, therefore certainly human): the statistical detector rejected
+**15 of 24** at the default threshold — a **62% false-positive rate** on real
+human science. Root causes:
+
+1. `scoreText` counted AI-tells absolutely, then `min(1, total/10)` saturated
+   the 0.55 lexicon weight on any document past ~7 weighted hits. A 3191-word
+   2019 paper scored 42 hits → 55 of its 74 points from pre-ChatGPT text.
+2. Lexical diversity used raw type-token ratio, which falls mechanically with
+   length (length proxy, not AI style). Word-count vs score correlation was
+   **r = 0.539**; after the fix **r = 0.132**.
+
+Fixes (corpus-calibrated):
+
+- **Density scoring**: weighted AI-tell hits per 1000 words; thresholds
+  (`safe_max` / `caution_max`) reinterpreted on that scale; lexicon_tells
+  saturates at 8 /1k density.
+- **MATTR** (window 100) replaces raw TTR for lexical diversity; function-word
+  and sophistication baselines re-derived from the scientific corpus.
+- **Lexicon audit**: entries that fired repeatedly across the 24 human papers
+  are not AI tells (e.g. “has been shown to”, ordinary adverbs like “notably”,
+  “In recent years,”, “to our knowledge”). Kept genuine LLM register.
+- **Default threshold 40 → 30** (`ai-detector.ts` + `statistical-ai-detector.ts`).
+  Post-fix: all 24 human papers pass (max ≤ 34, median ≈ 6–7); adversarial
+  probes with stacked AI tells still score ≈ 60–69.
+- Em-dash overuse uses the same density basis (supersedes the interim
+  `max(4, floor(words/200))` absolute gate from hostile-audit #11).
+
+### Citation search failures are warnings, not fake sources
+
+Search-backend failures (Serper/Exa) used to be pushed into
+`ResolveResult.candidates` as titles like `(Serper Scholar search failed: …)`,
+which the pipeline treated as found sources — the worst failure mode for a
+citation resolver. Failures now go to `ResolveResult.warnings` only;
+`find_citation` surfaces them in tool details.
+
 ### silentRewrite runs on EVERY assistant message — it was corrupting non-prose (#2, #5, #6)
 
 The `message_end` hook passes every assistant message through `silentRewrite`.
@@ -64,11 +102,12 @@ latest message) each turn, with a try/catch fallback to the static injection.
 `an URL` and `an MRI` → `a MRI` (both wrong — consonant sounds). Now skips
 all-caps acronyms (2–6 letters) and leaves them untouched.
 
-### Em-dash threshold was too aggressive (#11)
+### Em-dash threshold was too aggressive (#11 → density)
 
 The fixed `> 2` flagged legitimate scientific prose and especially short
-passages. Now length-scaled: `max(4, floor(words/200))`, so 3 em-dashes in
-a short paragraph is no longer a tell, while dense AI-ish text still trips.
+passages. First length-scaled to `max(4, floor(words/200))`; then superseded
+by calibrated density (em-dashes per 1000 words vs `emdash_density_max_per_1k`,
+default 2.0) so long human papers with a handful of dashes no longer saturate.
 
 ### detectRewriteLoop compounded silentRewrite damage (#12)
 

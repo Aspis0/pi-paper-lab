@@ -18,7 +18,10 @@ export interface AIDetectionResult {
   source: "copyleaks" | "local";
 }
 
-const DEFAULT_THRESHOLD = 40; // 40% = "might be AI"
+// Calibrated gate (must match `threshold` in statistical-ai-detector.ts).
+// Pre-ChatGPT human papers max 34 / median ~6; adversarial probes 60–69.
+// Old 40 rejected 15/24 real human papers (62% false-positive rate).
+const DEFAULT_THRESHOLD = 30;
 
 // === Copyleaks API client ===
 // Requires COPYLEAKS_API_KEY env var. Free tier: 1000 requests/month.

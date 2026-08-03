@@ -2,7 +2,7 @@
 // Regression tests for the hostile-audit fixes in silentRewrite.
 // Covers: code-block gate (#2/#5/#6), blind-conjugation safety (#3),
 // case-preserving semantic rewrites (#4), acronym article agreement (#7),
-// length-scaled em-dash threshold (#11).
+// em-dash density scoring (#11 → calibrated density/1k, 2026-08).
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -66,12 +66,28 @@ describe("hostile audit — silentRewrite safety", () => {
     assert.match(silentRewrite("An detailed mechanism.", lex).text, /^A detailed/);
   });
 
-  it("#11: a short passage with 3 em-dashes is no longer an AI-tell", () => {
-    // 3 em-dashes in ~25 words — previously flagged (>2), now below the
-    // length-scaled threshold (max(4, words/200) = 4).
-    const { total, hits } = scoreText("The gene — and its paralog — drive the fate — of the cell.", lex);
-    assert.equal(hits.find((h) => h.category === "emdash"), undefined, "no emdash hit for 3 em-dashes in short text");
-    assert.ok(total < 2, `score stays low (got ${total})`);
+  it("#11: em-dash scoring uses density per 1k words (calibrated 2026-08)", () => {
+    // Calibration superseded the interim max(4, words/200) absolute gate with
+    // density: emPer1k > emdashDensityMaxPer1k (default 2.0). Human sci corpus
+    // ≈ 0/1k; 3 dashes in ~12 words is dense (~250/1k) and must fire, while a
+    // long passage with sparse dashes stays under the gate.
+    const shortDense = scoreText(
+      "The gene — and its paralog — drive the fate — of the cell.",
+      lex,
+    );
+    assert.ok(
+      shortDense.hits.some((h) => h.category === "emdash"),
+      "dense em-dashes in short text still fire under density scoring",
+    );
+
+    // ~1000 words, 1 em-dash → 1/1k ≤ 2.0 → no hit (length-robust, not absolute).
+    const longSparse = "word ".repeat(999) + "end — trailing.";
+    const sparse = scoreText(longSparse, lex);
+    assert.equal(
+      sparse.hits.find((h) => h.category === "emdash"),
+      undefined,
+      "1 em-dash in ~1000 words is under density max and must not fire",
+    );
   });
 
   it("looksLikeCodeOrNonProse: detects code/JSON, passes prose", () => {

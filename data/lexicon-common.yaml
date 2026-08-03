@@ -50,6 +50,11 @@ preferred_verbs:
     - show
 
 # === Verbs that are AI-tells or community-taboos ===
+# AI-tell verbs — recognisable LLM register, NOT ordinary scientific English.
+# Corpus audit (24 pre-ChatGPT OA papers, 2018–2020): removed terms that fired
+# repeatedly on genuine human science (has/have been shown to, is/are known to,
+# elucidate, address the question, well-established boilerplate). Those are
+# normal scholarly phrasing, not ChatGPT tells.
 avoided_verbs:
   - "delve into"
   - "delve"
@@ -60,18 +65,16 @@ avoided_verbs:
   - "unravel the mysteries of"
   - "leverage"
   - "leverage the power of"
-  - "foster"
-  - "elucidate"
   - "uncover the mysteries"
   - "explore the complexities of"
   - "explore the intricate"
   - "tackle the challenge"
-  - "address the question"
   - "revolutionize"
   - "transform our understanding"
   - "pave the way"
   - "open new avenues"
   - "drive innovation"
+  # Formulaic "plays a … role" stack — kept: low corpus rate (≤2 docs) but strong AI cadence
   - "plays a crucial role in"
   - "plays a key role in"
   - "plays an essential role in"
@@ -88,26 +91,30 @@ avoided_verbs:
   - "play an important role in"
   - "plays a significant role in"
   - "play a significant role in"
-  - "is known to"
-  - "are known to"
-  - "has been shown to"
-  - "have been shown to"
-  - "has previously been shown to"
-  - "have previously been shown to"
-  - "has been well established that"
-  - "have been well established that"
-  - "it is well established that"
-  - "it is widely accepted that"
-  - "it is generally accepted that"
-  - "it is now clear that"
-  - "it has become clear that"
+  # Added 2026-08 (owner targets / missing genuine tells; 0 hits on pre-ChatGPT corpus)
+  - "underscore"
+  - "underscores"
+  - "underscored"
+  - "underscoring"
+  - "showcase"
+  - "showcases"
+  - "showcased"
+  - "showcasing"
 
-# === Nouns that mark AI prose ===
+# === Nouns / adjectives that mark AI prose (not normal Methods/Results English) ===
+# Removed after corpus audit (hit counts across 24 human papers):
+#   better understanding (4 docs), a better understanding of (2), deeper understanding,
+#   remain(s) poorly understood / unclear / elusive / largely unknown (standard intros),
+#   open/long-standing/unresolved question, limited/our current understanding,
+#   the underlying/precise/molecular mechanisms… (biology boilerplate),
+#   remarkable, profound, novel approach/insights (ordinary scholarly vocabulary).
+# Kept owner-named tells even if rare: landscape (1 hit), intricate (1), tapestry, realm…
 avoided_nouns:
   - "intricacies"
   - "intricate"
   - "intricate network"
   - "tapestry"
+  - "rich tapestry"
   - "the multifaceted nature of"
   - "multifaceted nature"
   - "multifaceted"
@@ -115,98 +122,63 @@ avoided_nouns:
   - "holistic"
   - "holistic approach"
   - "landscape"
-  - "a deeper understanding"
   - "complex interplay"
   - "myriad of"
   - "myriad"
+  - "a myriad of"
   - "burgeoning field"
   - "exciting frontier"
   - "realms of"
+  - "realm"
   - "synergistic"
   - "cutting-edge"
   - "state-of-the-art"
-  - "novel insights"
-  - "novel approach"
-  - "novel therapeutic targets"
   - "groundbreaking"
   - "unprecedented"
   - "revolutionary"
-  - "profound"
-  - "remarkable"
-  - "a deeper understanding of"
-  - "deeper understanding"
-  - "a better understanding of"
-  - "better understanding"
-  - "remain poorly understood"
-  - "remains poorly understood"
-  - "remain largely unknown"
-  - "remains largely unknown"
-  - "remain elusive"
-  - "remains elusive"
-  - "remains unclear"
-  - "are poorly defined"
-  - "is poorly defined"
-  - "a long-standing question"
-  - "long-standing question"
-  - "long-standing mystery"
-  - "unresolved question"
-  - "open question"
-  - "limited understanding"
-  - "our current understanding"
-  - "the molecular mechanisms underlying"
-  - "the underlying mechanisms"
-  - "the precise mechanisms"
-  - "the intricate mechanisms"
-  - "a myriad of"
   - "a plethora of"
   - "plethora"
   - "an array of"
   - "a suite of"
   - "a host of"
   - "a wealth of"
+  # Added 2026-08 — owner AI-tell vocabulary; 0 hits on pre-ChatGPT corpus
+  - "testament"
+  - "pivotal"
+  - "nuanced"
+  - "meticulous"
+  - "paradigm shift"
+  - "game-changer"
+  - "treasure trove"
+  - "beacon"
 
 # === Filler / bumper words — DELETE on sight ===
+# Scoring + rewrite lists. Corpus audit removed ordinary academic adverbs that
+# dominated false positives on human papers (counts = total hits / docs hit):
+#   very 20/7, rather 18/10, indeed 10/7, interestingly 6/6, clearly 5/3,
+#   importantly 5/2, notably 3/3, essentially 3/2, as expected 3/3, of course 2/1,
+#   quite/somewhat/remarkably/crucially/surprisingly 1 each.
+# Kept only empty-padding / chatty intensifiers that are rare in formal science
+# and common in LLM blog register.
 filler_words:
   adverbs_to_remove:
-    - "crucially"
-    - "notably"
-    - "importantly"
-    - "essentially"
-    - "fundamentally"
-    - "remarkably"
-    - "interestingly"
-    - "surprisingly"
     - "literally"
-    - "very"
     - "really"
-    - "quite"
-    - "rather"
-    - "somewhat"
-    - "indeed"
-    - "clearly"
     - "obviously"
-    - "of course"
-    - "as expected"
   phrase_openers_to_remove:
+    # Formulaic AI/chat openers — kept. Removed normal paper cadence after audit:
+    #   Notably, In conclusion, To summarize, In summary, We believe, We hypothesize that,
+    #   As mentioned earlier, As discussed above, Historically, In recent years
+    #   (and self-promo single-words "novel"/"groundbreaking" — see below).
     - "It is important to note that"
     - "It is worth noting that"
     - "It should be noted that"
     - "Of note,"
     - "It is interesting that"
     - "Fascinatingly,"
-    - "Notably,"
-    - "In conclusion,"
-    - "To summarize,"
-    - "In summary,"
     - "This paper aims to"
-    - "We believe"
-    - "We hypothesize that"
-    - "As mentioned earlier,"
-    - "As discussed above,"
     - "As is well known,"
     - "It has long been known that"
-    - "Historically,"
-    - "In recent years,"
     - "With the advent of"
     - "In the post-genomic era,"
     - "In the era of"
@@ -214,6 +186,12 @@ filler_words:
     - "Spurred by"
     - "Motivated by"
     - "Inspired by nature,"
+    - "Let's dive in"
+    - "Let us delve"
+    - "Let's explore"
+    - "Imagine a world where"
+    - "Picture this:"
+    - "In today's rapidly evolving"
   phrase_connectors_to_rephrase:
     "in order to": "to"
     "due to the fact that": "because"
@@ -260,10 +238,11 @@ adjective_intensifiers_to_avoid:
   - "innovative"
 
 # === Anti-self-promotion openers ===
+# Merged into phrase_openers for scoring/rewrite. Corpus audit: "to our knowledge"
+# (4 docs), "novel" (5 docs as bare substring), "for the first time" (1) are
+# normal scientific claims language — NOT AI tells. Keep only the hype word that
+# is rare in careful science writing.
 self_promotion_openers_to_remove:
-  - "for the first time"
-  - "to our knowledge"
-  - "novel"
   - "groundbreaking"
 
 # === Numbers / statistics policy ===
@@ -468,6 +447,14 @@ claim_strength:
     never: "SEM for error bars on individual data points (misleading)"
 
 # === AI-tell detection thresholds ===
+# Density-based AI-tell scoring (per 1000 words), not absolute counts.
+# Measured on 24 pre-ChatGPT OA papers after lexicon prune: human weighted density
+# is typically 0–1.5 /1k (most papers 0). Absolute counts previously maxed the
+# 0.55-weight component on every long human paper (e.g. 42 hits → rewrite-mandatory).
+# safe/caution thresholds are therefore on the per-1k density scale.
+# emdash_overuse_threshold: weight applied when em-dash density exceeds
+# emdash_density_max_per_1k (human corpus: 22/24 papers had 0 em-dashes; two
+# papers had 5–6 absolute → still low density). Owner target: fire on overuse.
 ai_tell_scoring:
   weights:
     avoided_verb_hit: 1.0
@@ -476,6 +463,11 @@ ai_tell_scoring:
     ai_opener_hit: 3.0
     emdash_overuse_threshold: 2.0
     sentence_length_uniformity: 1.0
+  # Em-dashes per 1000 words above this count as overuse (scoreText density path).
+  # 2.0/1k ≈ more than one em-dash every 500 words — above human sci rate (≈0).
+  emdash_density_max_per_1k: 2.0
   thresholds:
+    # Density units: weighted hits per 1000 words.
+    # After prune, human band ≈ 0–2; AI adversarial probes with stacked tells ≈ 15–40+.
     safe_max: 2.0
     caution_max: 5.0

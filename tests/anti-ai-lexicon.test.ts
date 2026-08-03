@@ -31,10 +31,13 @@ We leverage state-of-the-art CRISPR technology to shed light on the complex inte
 Crucially, our findings may potentially navigate the underlying mechanisms.
 `;
 const score = scoreText(aiProse, lex);
-assert(score.total > 5, "AI prose scores above flagged threshold");
+// total is weighted density per 1000 words (calibrated 2026-08), not absolute hits.
+// Short stacked AI prose still saturates well above caution_max (5.0).
+assert(score.total > 5, "AI prose density scores above flagged threshold");
 assert(score.hits.some((h) => h.category === "verb"), "Detected avoided verbs");
 assert(score.hits.some((h) => h.category === "opener"), "Detected phrase opener");
-assert(score.hits.some((h) => h.category === "filler"), "Detected filler adverb");
+// "Crucially" was pruned from filler adverbs (fires on genuine human science);
+// AI prose still trips on verbs/openers/nouns. Filler category optional here.
 
 const humanProse = `
 We crossed y[1] w[1118]; +; P{GAL4}attP2 females to balancer males and aged the
@@ -53,7 +56,10 @@ const rewriteTarget =
   "It is important to note that, in order to study the fly, we leverage CRISPR in order to shed light on gene function.";
 const { text: rewritten, stats } = silentRewrite(rewriteTarget, lex);
 assert(stats.connectors > 0, "Connectors rewritten");
-const fillerOnly = "It is crucial, notably, that the gene is, importantly, expressed.";
+// Calibration pruned ordinary academic adverbs (notably/importantly/essentially)
+// that dominated false positives on pre-ChatGPT human papers. Keep empty-padding
+// intensifiers that are rare in formal science (really/obviously/literally).
+const fillerOnly = "It is, really, the case that the gene is, obviously, expressed.";
 const { stats: fillerStats } = silentRewrite(fillerOnly, lex);
 assert(fillerStats.fillers >= 2, "Filler adverbs silently removed");
 assert(!rewritten.includes("leverage"), "Avoided verb 'leverage' replaced in main test");
@@ -94,8 +100,10 @@ assert(/^The gene is expressed/.test(cap1), `B3: opener removed + capitalize wor
 // --- B3b: comma-suffixed openers no longer dead ---
 const cap2 = silentRewrite("Of note, the gene was expressed.", lex).text;
 assert(!cap2.includes("Of note"), `B3b: 'Of note,' removed (got "${cap2}")`);
-const cap3 = silentRewrite("In conclusion, we showed the result.", lex).text;
-assert(!cap3.includes("In conclusion"), `B3b: 'In conclusion,' removed (got "${cap3}")`);
+// "In conclusion," was pruned in the 2026-08 lexicon audit (normal paper cadence,
+// not an AI tell). Use an opener that remains on the AI/chat list.
+const cap3 = silentRewrite("It is worth noting that we showed the result.", lex).text;
+assert(!cap3.toLowerCase().includes("it is worth noting"), `B3b: 'It is worth noting that' removed (got "${cap3}")`);
 
 // --- B4: subject-verb agreement on Our/These/The findings ---
 assert(
@@ -170,9 +178,11 @@ assert(!m5.includes("intricate"), `M5: 'intricate' rewritten (got "${m5}")`);
 const m5b = silentRewrite("We explored the multifaceted role of taranis.", lex).text;
 assert(!m5b.includes("multifaceted"), `M5: 'multifaceted role' rewritten (got "${m5b}")`);
 
-// --- Oracle: adjective intensifiers flagged ---
-const intensifier = silentRewrite("This shows a profound disorganization.", lex).text;
-assert(!intensifier.includes("profound"), `Adjective 'profound' replaced (got "${intensifier}")`);
+// --- Oracle: AI-tell adjectives still rewrite (kept after 2026-08 audit) ---
+// "profound"/"remarkable" pruned from scoring lexicon (ordinary scholarly
+// vocabulary on the human corpus). "intricate"/"multifaceted" remain.
+const intensifier = silentRewrite("This shows an intricate disorganization.", lex).text;
+assert(!intensifier.includes("intricate"), `AI-tell adjective 'intricate' replaced (got "${intensifier}")`);
 
 // --- Voice rule: 'limited' allowed 'Here, we...' ---
 const voiceCheck = silentRewrite("Here, we investigated the role.", lex).text;
@@ -200,13 +210,21 @@ assert(
 );
 
 // --- N3 (self-promotion openers wired into opener removal) ---
+// 2026-08 corpus audit: "for the first time" / "to our knowledge" / bare "novel"
+// fire on genuine pre-ChatGPT human science — they are normal claims language,
+// not AI tells. Kept only the rare hype word "groundbreaking".
 assert(
-  !silentRewrite("For the first time, we show that X is expressed.", lex).text.includes("For the first time"),
-  "N3: 'For the first time' removed",
+  !silentRewrite("This groundbreaking result is clear.", lex).text.includes("groundbreaking"),
+  "N3: 'groundbreaking' still removed (kept AI hype after audit)",
+);
+// Pruned terms must NOT be auto-deleted (would rewrite legitimate science).
+assert(
+  silentRewrite("For the first time, we show that X is expressed.", lex).text.includes("For the first time"),
+  "N3: 'For the first time' preserved after lexicon audit (human claims language)",
 );
 assert(
-  !silentRewrite("To our knowledge, this is novel.", lex).text.includes("To our knowledge"),
-  "N3: 'To our knowledge' removed",
+  silentRewrite("To our knowledge, this is new.", lex).text.includes("To our knowledge"),
+  "N3: 'To our knowledge' preserved after lexicon audit (human claims language)",
 );
 
 // --- Domain-term mappings loaded from YAML ---
@@ -286,10 +304,12 @@ assert(cc.some((h) => h.category === "correlation_causation"), `B1: 'regulates' 
 const p013 = checkClaimStrength("We observed X (n=5, p=0.013).", lex);
 assert(p013.detectedP === 0.013, `p=0.013 extracts correctly, not 0.13 (got ${p013.detectedP})`);
 
-// --- v0.4: new openers removed ---
+// --- v0.4 openers (updated 2026-08 calibration) ---
+// "In recent years," pruned as normal paper cadence on the human corpus.
+// "With the advent of" kept — still an AI/chat formulaic opener.
 assert(
-  !silentRewrite("In recent years, the field has advanced.", lex).text.includes("In recent years"),
-  "v0.4: 'In recent years' opener removed",
+  silentRewrite("In recent years, the field has advanced.", lex).text.includes("In recent years"),
+  "calibration: 'In recent years' preserved (human paper cadence, not AI tell)",
 );
 assert(
   !silentRewrite("With the advent of CRISPR, we can now...", lex).text.includes("With the advent of"),
@@ -302,9 +322,14 @@ assert(
   "v0.4: 'plays a major role in' → 'is required for'",
 );
 
-// --- v0.4: 'has been shown to' removed ---
+// --- 'has been shown to' (updated 2026-08 calibration) ---
+// Pruned from avoided_verbs: fires repeatedly on genuine human science
+// (Methods/Results boilerplate). Not an AI tell; silentRewrite leaves it.
 const hbst = silentRewrite("Tara has been shown to regulate neuroblasts.", lex).text;
-assert(!hbst.includes("has been shown to"), `v0.4: 'has been shown to' removed (got "${hbst}")`);
+assert(hbst.includes("has been shown to"), `calibration: 'has been shown to' preserved (got "${hbst}")`);
+// Real AI-tell verbs still rewrite.
+const delve = silentRewrite("We delve into the pathway.", lex).text;
+assert(!delve.includes("delve"), `AI-tell 'delve' still rewritten (got "${delve}")`);
 
 // --- v0.4: sloppy patterns loaded from YAML ---
 assert(lex.sloppyPatterns.vagueQuantifiers.length >= 5, `Sloppy: vagueQuantifiers loaded (got ${lex.sloppyPatterns.vagueQuantifiers.length})`);

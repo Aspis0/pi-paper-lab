@@ -5,6 +5,12 @@
 //
 // Before fix: "suggest rather than" → "suggest than" (broken grammar)
 // After fix: "rather than" is preserved when the word is followed by "than".
+//
+// 2026-08 calibration: "rather" was removed from filler_words entirely
+// (18 hits / 10 of 24 pre-ChatGPT human papers — ordinary scholarly English,
+// not an AI tell). Standalone "rather" is therefore also left alone; the
+// look-ahead that protected "rather than" remains as defense-in-depth if the
+// word is ever re-added to the filler list.
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
@@ -22,21 +28,22 @@ test("silentRewrite: 'rather than' is NOT deleted (comparative construction)", (
   );
 });
 
-test("silentRewrite: standalone 'rather' (filler) IS deleted", () => {
+test("silentRewrite: standalone 'rather' preserved after lexicon audit", () => {
+  // Calibration: "rather" is not an AI tell (high rate on human science corpus).
   const input = "The outcome was rather uncertain in this context.";
   const { text } = silentRewrite(input, lex);
   assert.ok(
-    !text.toLowerCase().includes("rather"),
-    `standalone "rather" as filler should be deleted; got: "${text}"`,
+    text.toLowerCase().includes("rather"),
+    `standalone "rather" must be preserved; got: "${text}"`,
   );
 });
 
-test("silentRewrite: 'rather,' (filler with commas) IS deleted", () => {
+test("silentRewrite: 'rather,' with commas preserved after lexicon audit", () => {
   const input = "The process, rather, was more complex than expected.";
   const { text } = silentRewrite(input, lex);
   assert.ok(
-    !text.toLowerCase().includes("rather"),
-    `filler "rather" with commas should be deleted; got: "${text}"`,
+    text.toLowerCase().includes("rather"),
+    `"rather," must be preserved; got: "${text}"`,
   );
 });
 

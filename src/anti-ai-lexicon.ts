@@ -109,6 +109,8 @@ export interface Lexicon {
       sentenceLengthUniformity: number;
     };
     thresholds: { safeMax: number; cautionMax: number };
+    /** Em-dashes per 1000 words above which overuse weight fires. */
+    emdashDensityMaxPer1k: number;
   };
 }
 
@@ -443,6 +445,8 @@ export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
         sentenceLengthUniformity: Number(data.ai_tell_scoring?.weights?.sentence_length_uniformity ?? 1.0),
       },
       thresholds: {
+        // Density units: weighted hits per 1000 words (see scoreText). Defaults
+        // from pre-ChatGPT corpus after lexicon prune: human band ≈ 0–2 /1k.
         safeMax: (() => {
           const v = data.ai_tell_scoring?.thresholds?.safe_max ?? data.ai_tell_scoring?.thresholds?.safe;
           const n = typeof v === "number" ? v : Number(v);
@@ -454,6 +458,13 @@ export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
           return Number.isFinite(n) ? n : 5;
         })(),
       },
+      // Em-dash overuse gate on a density basis. Human sci corpus: ≈0 /1k;
+      // 2.0 /1k is above every pre-ChatGPT sample while still catching stacked LLM dashes.
+      emdashDensityMaxPer1k: (() => {
+        const v = data.ai_tell_scoring?.emdash_density_max_per_1k;
+        const n = typeof v === "number" ? v : Number(v);
+        return Number.isFinite(n) ? n : 2.0;
+      })(),
     },
   };
 }
@@ -467,16 +478,42 @@ export interface ScoreDetail {
 }
 
 export interface ScoreResult {
+  /**
+   * Weighted AI-tell density per 1000 words (scoring quantity).
+   * Absolute hit counts grow with document length and are not comparable to
+   * paragraph-scale thresholds; density is. Hit list remains absolute for feedback.
+   */
   total: number;
+  /** Absolute sum of hit weights before length normalisation. */
+  rawWeight: number;
+  /** Word count used for density (tokens with length > 1). */
+  wordCount: number;
   hits: ScoreDetail[];
   verdict: "human-like" | "edit-recommended" | "rewrite-mandatory";
 }
 
 const escapeForRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Count words the same way as the statistical detector (len > 1). */
+export function countScoreWords(text: string): number {
+  return text.split(/\s+/).filter((w) => w.length > 1).length;
+}
+
+/**
+ * Density = (raw weighted hits / words) * 1000.
+ * Measured justification: a 3191-word 2019 human paper scored rawWeight=42 under
+ * the old absolute scheme and saturated the 0.55 lexicon component; per-1k density
+ * on the pruned lexicon is ~0 for that paper.
+ */
+export function densityPer1k(rawWeight: number, wordCount: number): number {
+  if (wordCount <= 0) return rawWeight > 0 ? Infinity : 0;
+  return (rawWeight / wordCount) * 1000;
+}
+
 export function scoreText(text: string, lex: Lexicon): ScoreResult {
   const hits: ScoreDetail[] = [];
   const lower = text.toLowerCase();
+  const wordCount = countScoreWords(text);
 
   const W = lex.scoring.weights;
 
@@ -501,36 +538,41 @@ export function scoreText(text: string, lex: Lexicon): ScoreResult {
     const m = lower.match(re);
     if (m) for (const _ of m) hits.push({ hit: a, category: "filler", weight: W.fillerAdverbHit });
   }
-  // phrase openers (substring because they include commas)
+  // phrase openers (substring because multi-word openers include commas/apostrophes)
   for (const p of lex.phraseOpeners) {
     if (!p) continue;
     if (lower.includes(p.toLowerCase())) {
       hits.push({ hit: p, category: "opener", weight: W.aiOpenerHit });
     }
   }
-  // em-dash overuse — hostile-audit fix #11: the fixed `> 2` threshold
-  // flagged legitimate scientific prose (which uses em-dashes freely) and
-  // especially penalised short passages. Scale the threshold with length so
-  // a short paragraph with 3 em-dashes is no longer a "tell", while a long
-  // AI-ish passage still trips on density.
-  const words = (text.match(/\b\w+\b/g) ?? []).length || 1;
+  // Em-dash overuse on a density basis (calibrated 2026-08). Supersedes the
+  // interim hostile-audit #11 length-scaled absolute threshold (max(4, words/200)):
+  // both aim to stop whole-document absolute counts from flagging long human
+  // prose; density (em/1k > emdashDensityMaxPer1k, weight scaled by overage)
+  // is the corpus-calibrated form. Human sci ≈ 0/1k; AI probes with stacked
+  // dashes exceed 10/1k.
   const emdashes = (text.match(/—/g) ?? []).length;
-  const emThreshold = Math.max(4, Math.floor(words / 200));
-  if (emdashes > emThreshold) {
+  const emPer1k = wordCount > 0 ? (emdashes / wordCount) * 1000 : emdashes > 0 ? Infinity : 0;
+  const emMax = lex.scoring.emdashDensityMaxPer1k;
+  if (emdashes > 0 && emPer1k > emMax) {
+    // Scale weight by how far over the density gate we are, capped at 3× base.
+    const overFactor = Math.min(3, emPer1k / emMax);
     hits.push({
-      hit: `em-dash x ${emdashes}`,
+      hit: `em-dash ${emdashes} (${emPer1k.toFixed(1)}/1k words)`,
       category: "emdash",
-      weight: W.emdashOveruseThreshold,
+      weight: W.emdashOveruseThreshold * overFactor,
     });
   }
 
-  const total = hits.reduce((acc, h) => acc + h.weight, 0);
+  const rawWeight = hits.reduce((acc, h) => acc + h.weight, 0);
+  // total is density (per 1000 words) — thresholds and statistical saturation use this scale.
+  const total = densityPer1k(rawWeight, wordCount);
   let verdict: ScoreResult["verdict"];
   if (total === 0 || total < lex.scoring.thresholds.safeMax) verdict = "human-like";
   else if (total <= lex.scoring.thresholds.cautionMax) verdict = "edit-recommended";
   else verdict = "rewrite-mandatory";
 
-  return { total, hits, verdict };
+  return { total, rawWeight, wordCount, hits, verdict };
 }
 
 // === Silent rewrite ===
