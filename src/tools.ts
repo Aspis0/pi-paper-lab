@@ -258,6 +258,11 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
         details: {
           topic: params.topic,
           candidateCount: result.candidates.length,
+          // Lets the caller distinguish "search failed" (warnings.length > 0)
+          // from "search found nothing" (candidateCount 0, no warnings) from
+          // "search found N sources" — a failed backend must never look like
+          // a successful empty search.
+          warnings: result.warnings,
         },
       };
     },
