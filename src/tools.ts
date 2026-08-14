@@ -8,6 +8,7 @@ import { checkClaimStrength, formatClaimReport } from "./claim-strength.ts";
 import { detectSloppy, formatSloppyReport } from "./sloppy-detector.ts";
 import { searchScholar, formatScholarResults } from "./serper-scholar.ts";
 import { lookupDoi, formatCrossRefWork } from "./crossref.ts";
+import { stripJats } from "./csl/adapters/crossrefToCsl.ts";
 import { resolveCitation, formatResolveResult, markClaims } from "./citations.ts";
 import { classifyFindings, formatClarifyPrompt } from "./clarify.ts";
 import { extractCitedClaims, buildVerificationPrompts, formatVerificationReport } from "./cite-verify.ts";
@@ -194,7 +195,7 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
             details: { found: false },
           };
         }
-        const abstract = work.abstract ? work.abstract.replace(/<[^>]+>/g, "").trim() : undefined;
+        const abstract = work.abstract ? stripJats(work.abstract) : undefined;
         return {
           content: [
             {
@@ -243,7 +244,10 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
           year: typeof c.year === "number" ? c.year : undefined,
           venue: c.venue,
           doi: c.doi,
-          source: (c.source === "crossref" ? "crossref" : "serper") as "crossref" | "serper",
+          // Map Serper Scholar's "scholar" label to the Finding enum's
+          // "serper"; keep exa/crossref as-is (exa candidates were
+          // previously mislabelled as "serper" here).
+          source: ({ scholar: "serper", crossref: "crossref", exa: "exa" } as const)[c.source],
           // We have no abstract from Serper/Exa; mark as "medium" so
           // computeConfidence falls back to topic-matching only.
           confidence: "medium" as const,
@@ -281,7 +285,7 @@ export function registerTools(pi: ExtensionAPI, lex: Lexicon): void {
     async execute(_id, params, signal, _onUpdate, _ctx) {
       try {
         const work = await lookupDoi(params.doi, { signal });
-        const abstract = work?.abstract ? work.abstract.replace(/<[^>]+>/g, "").trim() : undefined;
+        const abstract = work?.abstract ? stripJats(work.abstract) : undefined;
         const title = params.reference_title ?? work?.title?.[0] ?? "(unknown)";
         const authors = work?.author
           .map((a) => (a.family ? `${a.given ?? ""} ${a.family}`.trim() : a.name ?? "?"))

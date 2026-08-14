@@ -55,6 +55,10 @@ function usageAndExit(msg) {
 async function main() {
   const targetArg = process.argv[2];
   const outputArg = process.argv[3];
+  if (targetArg === "--version" || targetArg === "-v") {
+    console.log("paper-lab-word v0.7.10");
+    process.exit(0);
+  }
   if (!targetArg || targetArg === "-h" || targetArg === "--help") usageAndExit();
 
   const target = resolve(process.cwd(), targetArg);

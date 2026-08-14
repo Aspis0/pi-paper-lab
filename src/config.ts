@@ -59,10 +59,16 @@ export function getExaKey(): string | undefined {
 
 // Effective citation backend: env var first (host-app injection), then config
 // file. Default is "auto" — keyless Exa MCP first, then Serper if keyed,
-// CrossRef always (see searchExa in exa-scholar.ts).
+// CrossRef always (see searchExa in exa-scholar.ts). An invalid env value is
+// ignored (falls through to config/default) rather than silently disabling
+// every paid backend while CrossRef alone keeps running.
+const CITATION_BACKENDS: readonly CitationBackend[] = ["serper", "exa", "both", "auto", "crossref"];
+
 export function getCitationBackend(): CitationBackend {
   const env = process.env.PAPERLAB_CITATION_BACKEND;
-  if (env) return env as CitationBackend;
+  if (env && (CITATION_BACKENDS as readonly string[]).includes(env)) {
+    return env as CitationBackend;
+  }
   return loadConfig().citation_backend ?? "auto";
 }
 
@@ -102,7 +108,7 @@ export async function paperLabConfigCommand(
     `  3. Copyleaks email:         ${masked(config.copyleaks_email)}`,
     `  4. Copyleaks API key:       ${masked(config.copyleaks_api_key)}`,
     `  5. Domain (current: ${config.domain ?? "auto"})`,
-    `  6. Citation backend (current: ${config.citation_backend ?? "serper"})`,
+    `  6. Citation backend (current: ${config.citation_backend ?? "auto"})`,
     "",
     "  Pick a number to set/update, or press Esc to exit.",
   ];
@@ -114,7 +120,7 @@ export async function paperLabConfigCommand(
     "3. Copyleaks email",
     "4. Copyleaks API key",
     "5. Domain",
-    "6. Citation backend (serper / exa / both / auto)",
+    "6. Citation backend (auto / serper / exa / both / crossref)",
     "7. Show all (masked)",
     "8. Delete all keys",
   ]);
@@ -166,16 +172,18 @@ export async function paperLabConfigCommand(
   } else if (choice.startsWith("6")) {
     // Citation backend selection
     const selected = await ctx.ui.select("Citation backend:", [
-      `serper (default — use Serper only) — current: ${(config.citation_backend ?? "serper") === "serper" ? "✓" : ""}`,
+      `auto (default — keyless Exa first, then Serper if keyed) — current: ${(config.citation_backend ?? "auto") === "auto" ? "✓" : ""}`,
+      `serper (use Serper only) — current: ${config.citation_backend === "serper" ? "✓" : ""}`,
       `exa (use Exa only) — current: ${config.citation_backend === "exa" ? "✓" : ""}`,
       `both (parallel query, merge + dedupe) — current: ${config.citation_backend === "both" ? "✓" : ""}`,
-      `auto (try Exa first, fall back to Serper) — current: ${config.citation_backend === "auto" ? "✓" : ""}`,
+      `crossref (CrossRef only, fully keyless) — current: ${config.citation_backend === "crossref" ? "✓" : ""}`,
     ]);
     if (selected) {
-      if (selected.startsWith("serper")) config.citation_backend = "serper";
+      if (selected.startsWith("auto")) config.citation_backend = "auto";
+      else if (selected.startsWith("serper")) config.citation_backend = "serper";
       else if (selected.startsWith("exa")) config.citation_backend = "exa";
       else if (selected.startsWith("both")) config.citation_backend = "both";
-      else if (selected.startsWith("auto")) config.citation_backend = "auto";
+      else if (selected.startsWith("crossref")) config.citation_backend = "crossref";
       saveConfig(config);
       ctx.ui.notify(`✅ Citation backend set to: ${config.citation_backend}`, "info");
     }
@@ -187,7 +195,7 @@ export async function paperLabConfigCommand(
         `  Exa:        ${masked(config.exa)}`,
         `  Copyleaks:  ${masked(config.copyleaks_email)} / ${masked(config.copyleaks_api_key)}`,
         `  Domain:     ${config.domain ?? "auto"}`,
-        `  Backend:    ${config.citation_backend ?? "serper"}`,
+        `  Backend:    ${config.citation_backend ?? "auto"}`,
         "",
         `  Config file: ${CONFIG_PATH}`,
       ].join("\n"),

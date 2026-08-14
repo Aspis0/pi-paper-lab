@@ -139,18 +139,20 @@ async function main() {
     else if (a === "--live") opts.live = true;
     else if (a === "--install-style") opts.installStyleXsl = true;
     else if (a === "-h" || a === "--help") usageAndExit();
-    else if (a === "--version" || a === "-v") { /* handled below */ }
+    else if (a === "--version" || a === "-v") opts.version = true;
     else positional.push(a);
   }
   const arg = positional[0];
-  if (!arg) usageAndExit();
-  if (arg === "--version" || arg === "-v") {
+  // --version / -v must work WITHOUT a positional path (the old check on
+  // `arg` was unreachable because the flags were never pushed to positional).
+  if (opts.version || arg === "--version" || arg === "-v") {
     try {
       const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
       console.log(`${pkg.name} v${pkg.version}`);
     } catch { console.log("unknown"); }
     process.exit(0);
   }
+  if (!arg) usageAndExit();
 
   const target = resolve(process.cwd(), arg);
   if (!existsSync(target)) usageAndExit(`File not found: ${target}`);

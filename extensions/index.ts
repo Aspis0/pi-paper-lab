@@ -29,9 +29,11 @@ export default function (pi: ExtensionAPI) {
   const lex = loadLexicon(ROOT);
   const domains = discoverDomains(ROOT);
   // Resolve active domain: config override → "auto" (detect from text each turn)
-  // → first discovered domain
-  const config = loadConfig();
+  // → first discovered domain. NOTE: the config is re-read on EVERY call — the
+  // /paper-lab command persists changes to disk, and a stale in-memory copy
+  // would keep the previous domain active until the extension reloads.
   const resolveDomain = (text: string) => {
+    const config = loadConfig();
     if (config.domain && config.domain !== "auto") {
       return getDomain(ROOT, config.domain);
     }

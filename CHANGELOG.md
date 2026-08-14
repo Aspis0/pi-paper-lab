@@ -1,14 +1,37 @@
 # Changelog
 
-## v0.7.10 — metadata cleanup + remove broken publish workflow
+## v0.7.10 — metadata cleanup + hostile-audit fixes
 
-- Description/keywords: removed biology-specific terms (Drosophila, mouse,
-  cancer, …) — now purely domain-agnostic ("custom YAML profiles").
-- Removed `.github/workflows/publish.yml`: it had never succeeded in 20/20
-  runs (network-dependent test step + Trusted Publishing never configured),
-  and all versions were always published manually. Publishing is now manual
-  only — see PUBLISHING.md. No more error emails on tag pushes.
-- PUBLISHING.md rewritten for the manual-only flow.
+Hostile audit of the whole extension (read-through + pathological-input tests):
+
+- **/paper-lab menu**: citation-backend default shown as "serper" → "auto";
+  the `crossref` mode (v0.7.8) was not selectable from the menu — added.
+- **getCitationBackend**: an invalid `PAPERLAB_CITATION_BACKEND` env value
+  silently disabled every paid backend (CrossRef alone kept running); invalid
+  values are now ignored (fall back to config/default).
+- **Domain switch via /paper-lab had no effect**: `resolveDomain` read a stale
+  in-memory config captured at extension load; it now re-reads the config file
+  on every call, so changing the domain takes effect immediately.
+- **find_citation clarifier**: Exa candidates were mislabelled as "serper"
+  (the `Finding.source` enum already supports "exa") — fixed with an explicit
+  scholar→serper / exa→exa / crossref→crossref mapping.
+- **crossref_lookup / verify_citation tools** still used the old
+  `/<[^>]+>/g` abstract stripper (eats "P < 0.001 and > 2"); now use the
+  hardened `stripJats`.
+- **Sidecar metadata**: `citationBackend` recorded a stale default
+  ("crossref"); now uses `getCitationBackend()` (real default "auto").
+- **CLI --version was dead**: `paper-lab-finalize --version` printed the
+  usage and exited 2 (the flag was never pushed to `positional`);
+  `paper-lab-word`/`paper-lab-seed` treated `--version` as a file path
+  ("File not found"). All bins now print their version; `export` gained
+  `--version` too.
+- Verified with pathological inputs (DOI parens, [0], [9999], duplicate
+  cites, [CITATION NEEDED], empty file): no crashes. Known limit: old-style
+  Elsevier DOIs containing `<`/`>` do not match the citation regex (refs 0,
+  no crash) — extremely rare, documented.
+
+Tests: 363 (+3 config-backend). Description/keywords now domain-agnostic;
+publish workflow removed (never worked — see below).
 
 
 ## v0.7.9 — dependency security bump (@earendil-works/pi-* 0.84.1)

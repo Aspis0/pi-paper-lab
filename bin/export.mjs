@@ -52,6 +52,8 @@ function parseArgs(argv) {
       args.out = argv[++i];
     } else if (a === "--help" || a === "-h") {
       args.help = true;
+    } else if (a === "--version" || a === "-v") {
+      args.version = true;
     } else if (!args.input && !a.startsWith("-")) {
       args.input = a;
     } else {
@@ -148,6 +150,10 @@ function emitAll(items, style) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.version) {
+    console.log("paper-lab-export v0.7.10");
+    process.exit(0);
+  }
   if (args.help || !args.input) {
     printHelp();
     process.exit(args.help ? 0 : 1);

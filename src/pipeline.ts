@@ -1286,7 +1286,7 @@ export function finalizeDoc(
       schemaVersion: 1,
       sourceMarkdown: markdownPath,
       lastResolvedAt: new Date().toISOString(),
-      citationBackend: loadConfig().citation_backend ?? "crossref",
+      citationBackend: getCitationBackend(),
       citations: entries,
     };
     writeFileSync(cachePath, JSON.stringify(sidecar, null, 2) + "\n", "utf-8");

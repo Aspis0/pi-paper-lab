@@ -66,6 +66,16 @@ function extractDoi(body) {
 const target = process.argv[2];
 const force = process.argv.includes("--force");
 
+// --version / --help must not be treated as file paths.
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+  console.log("paper-lab-seed v0.7.10");
+  process.exit(0);
+}
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log("Usage: paper-lab-seed <path-to.md> [--force]");
+  process.exit(0);
+}
+
 if (!target || target === "-h" || target === "--help") {
   console.error("Usage: seed-sidecar.mjs <path-to.md> [--force]");
   console.error("  --force  Overwrite an existing .citations.json without prompting.");
