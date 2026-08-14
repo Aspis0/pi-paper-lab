@@ -54,15 +54,24 @@ export async function lookupDoi(
 
 // CrossRef API returns kebab-case keys (date-parts, container-title, published-print, published-online).
 // Normalize to camelCase so the TypeScript interface and consuming code work correctly.
-function normalizeWork(raw: any): CrossRefWork {
+// Exported so the sync resolver (lookupDoiSync in pipeline.ts) returns the same
+// shape as lookupDoi — both paths must share this function to avoid drift.
+export function normalizeWork(raw: any): CrossRefWork {
   if (!raw) return raw;
+  // CrossRef wire uses uppercase `DOI`; some cached/test fixtures use lowercase.
+  // Prefer the wire form, fall back to camelCase.
+  const doi = raw.DOI ?? raw.doi ?? "";
+  // Date slots: CrossRef always has `issued` (earliest of print/online). Newer
+  // responses also expose `published` as an alias. Prefer explicit published,
+  // then issued, so a work that only carries `issued` still gets a year.
+  const published = normalizeDateParts(raw.published ?? raw.issued);
   return {
-    doi: raw.doi,
+    doi,
     title: raw.title ?? [],
     author: raw.author ?? [],
-    published: normalizeDateParts(raw.published),
-    publishedPrint: normalizeDateParts(raw["published-print"]),
-    publishedOnline: normalizeDateParts(raw["published-online"]),
+    published,
+    publishedPrint: normalizeDateParts(raw["published-print"] ?? raw.publishedPrint),
+    publishedOnline: normalizeDateParts(raw["published-online"] ?? raw.publishedOnline),
     containerTitle: raw["container-title"] ?? raw.containerTitle ?? [],
     volume: raw.volume,
     issue: raw.issue,

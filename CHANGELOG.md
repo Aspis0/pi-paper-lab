@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.7.8 — keyless citations, field-neutral prompts, CrossRef hardening
+
+### Citations work with ZERO API keys (Exa free MCP + CrossRef)
+
+- `exa-scholar.ts`: keyless fallback to the free unauthenticated Exa MCP
+  (`https://mcp.exa.ai/mcp`, ~150 calls/day); REST first when `EXA_API_KEY` is set,
+  MCP otherwise, REST → MCP fallback on failure.
+- Default citation backend `serper` → `auto` (keyless-first Exa, then Serper if
+  keyed, CrossRef always). New `crossref`-only backend mode.
+- `/paper-cite` step description now reflects the *effective* backends given the
+  keys actually present (BUG-43) — no more “search Serper” when no Serper key.
+
+### CrossRef robustness (BUG-29)
+
+- `normalizeWork` is now exported and shared by the sync resolver
+  (`lookupDoiSync`) and the async `lookupDoi` — no more raw kebab-case drift.
+  Handles `DOI`/`doi` casing and `published`/`issued` fallback; works that only
+  carry `issued` no longer render as `n.d.` with a missing journal name.
+- `find_citation` candidates now carry JATS-stripped Crossref abstracts
+  (capped at 1200 chars) + `clampCitationNumResults` bounds [1,10].
+- `stripJats` hardened: name-anchored tag regex (keeps “P < 0.001 and > 2”) and
+  defensive on non-string inputs.
+
+### Field-neutral writing prompts
+
+- `/paper-write` prompt and the rewrite block no longer assume a biology paper:
+  match the user's genre/field; domain rules apply only when a YAML profile is
+  active; never invent experimental statistics, n, or p-values.
+
+Tests: 360 (17 new: lookup-doi-sync-normalize, citations-abstract).
+
 ## v0.7.7 — Anti-AI detector recalibration + citation search-failure safety
 
 Corpus-calibrated anti-AI detector (24 pre-ChatGPT papers) and a citation

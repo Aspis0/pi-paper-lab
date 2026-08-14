@@ -1,6 +1,6 @@
 # pi-paper-lab
 
-A [pi](https://github.com/earendil-works/pi) extension for writing scientific papers in any biology field. Anti-AI rewrite, Vancouver citations, `.docx` output.
+A [pi](https://github.com/earendil-works/pi) extension for scholarly and research writing: anti-AI rewrite, automatic citations, `.docx` output. Field-agnostic by default (papers, grants, reviews); domain profiles (YAML) add species/nomenclature/reporting rules when you work in a specific field.
 
 v0.7.5 adds **Word-native auto-renumbering** (`--live`): the `.docx` gets live CITATION fields that renumber when you edit in Word (`Ctrl+A, F9`). The BIBLIOGRAPHY field populates from the source list.
 
@@ -32,7 +32,12 @@ npm install -g bun-docx
 
 Download `docx.exe` from the [bun-docx releases](https://github.com/kklimuk/docx-cli) and put it in `~/.local/bin/` so the extension can find it.
 
-**Get a Serper API key** at https://serper.dev (2,500 free searches/month). Optional: get an [Exa](https://dashboard.exa.ai/api-keys) key for the alternative backend.
+v0.7.8 adds **keyless citation lookup**: Exa's free tier works with no API key at all (~150 calls/day), and CrossRef always runs — so `/paper-cite` and the study phase find real sources out of the box. Serper/Exa keys are optional upgrades, not requirements.
+
+**Optional API keys** (citations work without them):
+- [Exa](https://dashboard.exa.ai/api-keys) key → higher rate limits than the free tier (REST instead of the rate-limited free MCP)
+- [Serper](https://serper.dev) key → Google Scholar backend (2,500 free searches/month)
+- [Copyleaks](https://copyleaks.com) key → external AI-detection backend (otherwise a local statistical detector is used)
 
 **Configure** inside pi:
 
@@ -46,6 +51,7 @@ Interactive menu for API keys, domain selection, citation backend.
 
 ```
 /paper-write "introduction section for a mouse immunology paper"
+/paper-write "aims and hypotheses for a clinical trial protocol"
 /paper-rewrite MyDraft.md "tighten the methods section"
 /paper-cite MyDraft.docx "verify all citations"
 ```
@@ -88,7 +94,7 @@ Once you run `paper-lab-finalize`, it writes a **sidecar file** (`paper.citation
 
 Domains are YAML files in `data/domains/`. The extension scans the folder at runtime. Adding a domain = creating one file, no code changes.
 
-Built-in: `drosophila-genetics`, `mouse-mammalian`, `cancer-biology`, `c-elegans`, `neuroscience`, `general-biology`.
+Built-in: `drosophila-genetics`, `mouse-mammalian`, `cancer-biology`, `c-elegans`, `neuroscience`, `general-biology`. For any other field — or for non-biology science — create a YAML profile (or just write without a domain; the default voice rules are field-neutral).
 
 A YAML needs only `name:` to be valid. Example:
 
@@ -168,12 +174,13 @@ embeddings) — see `src/library/bm25.ts`.
 
 `/paper-lab` → option 6 picks:
 
-- `auto` (default): tries CrossRef first (canonical metadata), falls back to Serper
-- `serper`: Google Scholar via Serper.dev
-- `exa`: Exa.ai publications index, 350M+ papers
+- `auto` (default): keyless Exa first (free MCP, or REST if you have a key), falls back to Serper if configured, CrossRef always
+- `crossref`: CrossRef only (no Scholar/Exa calls — fully keyless)
+- `serper`: Google Scholar via Serper.dev (needs key)
+- `exa`: Exa.ai publications index, 350M+ papers (keyless via free MCP)
 - `both`: parallel query, merge + dedupe
 
-v0.7.0 also adds **OpenAlex** and **Europe PMC** as primary source-finders (no key required, structured metadata + abstracts). These run automatically during the study phase to give the LLM richer context (abstracts, MeSH terms, citation counts).
+OpenAlex and Europe PMC also run as primary source-finders during the study phase (no key required, structured metadata + abstracts).
 
 ## How it works
 
@@ -197,7 +204,7 @@ After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install 
 
 ## Acknowledgements
 
-- [bun-docx](https://github.com/SFETNI/bun-docx). Markdown ↔ .docx conversion CLI used for file I/O.
+- [bun-docx](https://github.com/kklimuk/docx-cli). Markdown ↔ .docx conversion CLI used for file I/O.
 - [pi](https://github.com/earendil-works/pi-coding-agent). The agent runtime this extends.
 - [Serper.dev](https://serper.dev). Google Scholar API.
 - [Exa](https://exa.ai). Neural academic search.

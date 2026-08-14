@@ -9,7 +9,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", ".paper-lab-keys.json");
 
-export type CitationBackend = "serper" | "exa" | "both" | "auto";
+export type CitationBackend = "serper" | "exa" | "both" | "auto" | "crossref";
 
 export interface PaperLabConfig {
   serper?: string;
@@ -55,6 +55,15 @@ export function getCopyleaksKey(): string | undefined {
 export function getExaKey(): string | undefined {
   if (process.env.EXA_API_KEY) return process.env.EXA_API_KEY;
   return loadConfig().exa;
+}
+
+// Effective citation backend: env var first (host-app injection), then config
+// file. Default is "auto" — keyless Exa MCP first, then Serper if keyed,
+// CrossRef always (see searchExa in exa-scholar.ts).
+export function getCitationBackend(): CitationBackend {
+  const env = process.env.PAPERLAB_CITATION_BACKEND;
+  if (env) return env as CitationBackend;
+  return loadConfig().citation_backend ?? "auto";
 }
 
 // === /paper-lab command ===

@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
-import { loadConfig } from "./config.ts";
+import { loadConfig, getCitationBackend, getSerperKey, getExaKey } from "./config.ts";
 import { fileURLToPath } from "node:url";
 
 // Ensure docx CLI (bun-docx) is on PATH — works on Windows and macOS
@@ -27,7 +27,7 @@ if (!process.env.PATH?.includes("local/bin") && !process.env.PATH?.includes("hom
 import { loadLexicon, silentRewrite, scoreText } from "./anti-ai-lexicon.ts";
 import { resolveCitation, generateBibliography, formatBibliography, CITE_MARKER, CITE_WITH_DOI } from "./citations.ts";
 import { classifyFindings, formatClarifyPrompt, serialiseClarifications, type ClarifyItem } from "./clarify.ts";
-import { lookupDoi, type CrossRefWork } from "./crossref.ts";
+import { lookupDoi, normalizeWork, type CrossRefWork } from "./crossref.ts";
 import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
 import { formatBibliography as formatCslBibliography } from "./csl/formatBibliography.ts";
 import { cslItemsToWordSources } from "./word-live-builder.ts";
@@ -52,14 +52,14 @@ const ROOT = join(__dirname, "..");
 // bin/finalize.mjs (always present after `pi install npm:pi-paper-lab`).
 function finalizeCommand(targetPath: string): string {
   const target = JSON.stringify(targetPath); // safe quoting for spaces/special chars
-  // Prefer the *host agent dir* (Paperlab Studio sets PI_CODING_AGENT_DIR to
-  // %APPDATA%/PaperlabStudio/agent with a vendored copy). Never require the
-  // user's coding ~/.pi profile or a network npx fetch for the product path.
+  // Prefer the *host agent dir* (a host app may set PI_CODING_AGENT_DIR to its
+  // own agent dir with a vendored copy). Never require the user's coding
+  // ~/.pi profile or a network npx fetch for the product path.
   // Order:
-  //   1. $PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab (Paperlab closed)
+  //   1. $PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab (host-vendored)
   //   2. paper-lab-finalize on PATH (optional)
   //   3. legacy ~/.pi install (dev only)
-  //   4. npx last resort (dev only; avoid in packaged Paperlab)
+  //   4. npx last resort (dev only)
   return [
     `if [ -n "$PI_CODING_AGENT_DIR" ] && [ -f "$PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ]; then`,
     `  node "$PI_CODING_AGENT_DIR/npm/node_modules/pi-paper-lab/bin/finalize.mjs" ${target}`,
@@ -275,14 +275,33 @@ export async function pipelineCite(
   const existingCitations = (text.match(CITE_WITH_DOI) ?? []).length;
   const existingMarkers = (text.match(CITE_MARKER) ?? []).length;
 
-  // Backend-aware step description (exa, serper, both, auto)
-  const backend = loadConfig().citation_backend ?? "serper";
-  const searchDesc: Record<string, string> = {
-    serper: "search Serper Scholar + CrossRef in batch",
-    exa: "search Exa.ai publications + CrossRef in batch",
-    both: "search Serper Scholar AND Exa.ai in parallel, then CrossRef in batch",
-    auto: "search Exa.ai first, fall back to Serper Scholar if Exa fails, then CrossRef in batch",
-  };
+  // Backend-aware step description — effective backends given keys (BUG-43).
+  const backend = getCitationBackend();
+  const hasSerper = Boolean(getSerperKey());
+  const hasExaKey = Boolean(getExaKey());
+  const exaLabel = hasExaKey ? "Exa REST" : "Exa free MCP";
+
+  function effectiveSearchDesc(b: string): string {
+    switch (b) {
+      case "serper":
+        return hasSerper
+          ? "search Serper Scholar + CrossRef in batch"
+          : "Citation backend setting: serper — Serper key not configured; CrossRef only";
+      case "exa":
+        return `search ${exaLabel} publications + CrossRef in batch`;
+      case "both":
+        return hasSerper
+          ? "search Serper Scholar AND Exa.ai in parallel, then CrossRef in batch"
+          : `Serper skipped (no key); search ${exaLabel} + CrossRef in batch`;
+      case "crossref":
+        return "search CrossRef only (no Serper/Exa)";
+      case "auto":
+      default:
+        return hasSerper
+          ? `search ${exaLabel} first, fall back to Serper Scholar if Exa fails, then CrossRef in batch`
+          : `search ${exaLabel} + CrossRef in batch`;
+    }
+  }
 
   const header = [
     `=== /paper-cite pipeline ===`,
@@ -294,7 +313,7 @@ export async function pipelineCite(
     instructions ? `User instructions: ${instructions}` : "",
     ``,
     `Step 1: I will identify claims that need citations (LLM cite-mark).`,
-    `Step 2: For each claim, I will ${searchDesc[backend]}.`,
+    `Step 2: For each claim, I will ${effectiveSearchDesc(backend)}.`,
     `Step 3: I will assign [N](doi:...) inline.`,
     `Step 4: I will generate the References section and produce a .docx.`,
   ].join("\n");
@@ -473,12 +492,12 @@ export async function pipelineWrite(
   const notesPath = outPath.replace(/\.md$/, ".study-notes.md");
 
   const prompt = [
-    `Write new text for a biology paper based on this description:`,
+    `Write new scholarly / research text as requested by the user (manuscript, grant, review, methods, etc. — match the user's genre and field).`,
     ``,
     `"${cleanDesc}"`,
     ``,
-    `Follow the domain-specific voice rules in your system prompt (species, nomenclature, reporting standards are all defined by the active domain YAML).`,
-    `- Reporting: n=X per group, statistical test, p-value, effect size, 95% CI.`,
+    `Follow domain-specific voice rules in your system prompt ONLY if a domain profile is active (YAML). Do not invent a field persona.`,
+    `- If the text reports experimental/statistical results: include n, test, p-value, effect size, CI when those apply.`,
     `- No AI-tells: no "delve", "leverage", "elucidate", "crucially", "notably".`,
     `- Paragraphs of 3-6 sentences. Vary sentence length.`,
     ``,
@@ -542,7 +561,7 @@ export function buildCiteMarkPrompt(filePath: string, text: string, rewriteInstr
 
   const rewriteBlock = includeRewrite
     ? [`STEP 1 — REWRITE + AI CHECK:`,
-       `Rewrite the draft for human scientific voice (follow your domain's voice rules). ${rewriteInstructions ? "Extra: " + rewriteInstructions : ""}`,
+       `Rewrite the draft for clear scholarly voice (follow active domain voice rules if any; otherwise stay field-neutral and match the draft's genre). ${rewriteInstructions ? "Extra: " + rewriteInstructions : ""}`,
        `Call ai_detect_statistical on your rewrite. If score >40%, rewrite the flagged sentences and re-test. Max 3 rounds.`,
        `Write the result to ${filePath.replace(/\.md$/, ".rewritten.md")}. Report initial→final AI score.`,
        ``].join("\n")
@@ -996,7 +1015,7 @@ export function finalizeDoc(
             if (work && typeof work === "object") {
               if (typeof (work as any).then === "function") {
                 // async mock — swallow its rejection so it can't crash the process.
-                (work as Promise<unknown>).catch(() => {});
+                (work as unknown as Promise<unknown>).catch(() => {});
               } else {
                 cslItems.set(num, crossrefToCsl(work as CrossRefWork, doi));
               }
@@ -1129,16 +1148,18 @@ export function finalizeDoc(
         // so this is always a fresh entry. Do not use `has()` as a guard: a
         // bare-marker placeholder may already have occupied the same number.
         citations.delete(n);
-        let work: any | null = null;
+        let work: CrossRefWork | null = null;
         try { work = resolveDoi(normalizedDoi); } catch { /* keep DOI stub */ }
         if (work) {
+          // resolveDoi returns a normalized CrossRefWork (camelCase) on both
+          // the async and sync paths — see lookupDoiSync (BUG-29).
           const authors = (work.author ?? []).map((a: any) =>
             a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ");
-          const year = work.published?.["date-parts"]?.[0]?.[0]
-            ?? work["published-print"]?.["date-parts"]?.[0]?.[0]
-            ?? work["published-online"]?.["date-parts"]?.[0]?.[0] ?? "?";
+          const year = work.published?.dateParts?.[0]
+            ?? work.publishedPrint?.dateParts?.[0]
+            ?? work.publishedOnline?.dateParts?.[0] ?? "?";
           const title = work.title?.[0] ?? "(untitled)";
-          const journal = work["container-title"]?.[0] ?? "";
+          const journal = work.containerTitle?.[0] ?? "";
           const vol = work.volume ?? "";
           const pages = work.page ?? "";
           citations.set(n, `${n}. ${authors}. ${title}. ${journal}. ${year}${vol ? ";" + vol : ""}${pages ? ":" + pages : ""}. doi:${normalizedDoi}`);
@@ -1573,11 +1594,15 @@ function parseInlineBibliography(text: string): Record<number, string> {
     try {
       const work = lookupDoiSync(doi);
       if (work) {
+        // lookupDoiSync returns a normalized CrossRefWork (camelCase) —
+        // see BUG-29 in lookupDoiSync.
         const authors = work.author?.map((a: any) =>
           a.family ? `${a.family} ${a.given ?? ""}`.trim() : a.name ?? "?").join(", ") ?? "";
-        const year = work.published?.["date-parts"]?.[0]?.[0] ?? work["published-print"]?.["date-parts"]?.[0]?.[0] ?? work["published-online"]?.["date-parts"]?.[0]?.[0] ?? work.published?.dateParts?.[0] ?? "?";
+        const year = work.published?.dateParts?.[0]
+          ?? work.publishedPrint?.dateParts?.[0]
+          ?? work.publishedOnline?.dateParts?.[0] ?? "?";
         const title = work.title?.[0] ?? "(untitled)";
-        const journal = work["container-title"]?.[0] ?? "";
+        const journal = work.containerTitle?.[0] ?? "";
         map[num] = `${authors}. ${title}. ${journal}. ${year}. doi:${doi}`;
       } else {
         map[num] = `Citation ${num} (doi:${doi})`;
@@ -1595,7 +1620,7 @@ function parseInlineBibliography(text: string): Record<number, string> {
 // is dead on Windows (no `curl` binary, or different name/flags). We
 // now spawn `node -e <script>` and use the built-in `fetch` (Node 18+).
 // This works on macOS, Linux, and Windows identically.
-function lookupDoiSync(doi: string): any | null {
+function lookupDoiSync(doi: string): CrossRefWork | null {
   const cleanDoiUrl = cleanDoi(doi.replace(/^https?:\/\/doi\.org\//i, ""));
   const url = `https://api.crossref.org/works/${encodeURIComponent(cleanDoiUrl)}`;
   // The script is a string literal that gets `eval`'d by `node -e`. We
@@ -1619,7 +1644,13 @@ function lookupDoiSync(doi: string): any | null {
       timeout: 15000,
     });
     if (!output) return null;
-    return JSON.parse(output);
+    // BUG-29: the child process writes CrossRef's raw kebab-case `message`.
+    // Run it through `normalizeWork` so both paths return the same camelCase
+    // shape — returning the raw message made consumers miss
+    // `published.dateParts` / `containerTitle` (drift vs the async path).
+    const raw = JSON.parse(output);
+    if (!raw) return null;
+    return normalizeWork(raw);
   } catch {
     return null;
   }

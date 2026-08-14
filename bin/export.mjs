@@ -94,9 +94,14 @@ Notes:
 // ── Sidecar loader ────────────────────────────────────────────────────────
 
 function sidecarPath(mdPath) {
-  // paper-lab-finalize writes <mdPath>.citations.json. We append the
-  // suffix to whatever path the user gave us.
-  return mdPath + ".citations.json";
+  // Must mirror sidecarPathFor() in src/pipeline.ts: finalize writes
+  // <path>.citations.json (REPLACING a trailing .md), not appending.
+  // Appending was the pre-v0.7.8 behavior and made paper-lab-export miss
+  // every sidecar written by the real finalize flow (only the hand-built
+  // test fixture matched it).
+  return /\.md$/i.test(mdPath)
+    ? mdPath.replace(/\.md$/i, ".citations.json")
+    : mdPath + ".citations.json";
 }
 
 function loadSidecar(mdPath) {

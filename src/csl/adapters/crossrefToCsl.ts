@@ -131,15 +131,16 @@ function mapCrossRefType(t: string | undefined): CslItem["type"] {
  * to handle nested tags. If a tag has attributes we keep the inner
  * text only.
  */
-export function stripJats(jats: string | undefined): string | undefined {
-  if (!jats) return undefined;
-  // Drop any <...> tag, keep inner text. Repeatedly apply to handle
-  // nested tags like <jats:p>foo <jats:bold>bar</jats:bold> baz</jats:p>.
+export function stripJats(jats: unknown): string | undefined {
+  if (typeof jats !== "string" || !jats) return undefined;
+  // Drop name-anchored tags only. Repeatedly apply to handle nested
+  // tags like <jats:p>foo <jats:bold>bar</jats:bold> baz</jats:p>.
+  // Do NOT use /<[^>]+>/ — that eats "P < 0.001 and > 2" → "P  2".
   let out = jats;
   let prev: string;
   do {
     prev = out;
-    out = out.replace(/<[^>]+>/g, "");
+    out = out.replace(/<\/?[a-zA-Z][^>]*>/g, "");
   } while (out !== prev);
   // Decode entities CrossRef uses most often. HIGH-4 fix: numeric
   // hex entities like &#x2014; (em-dash) were previously DELETED, not

@@ -75,7 +75,7 @@ test("CLI: sidecar with no DOIs exits 3", () => {
   try {
     const md = join(dir, "paper.md");
     writeFileSync(md, "No citations here.\n");
-    const sidecar = join(dir, "paper.md.citations.json");
+    const sidecar = join(dir, "paper.citations.json");
     writeFileSync(
       sidecar,
       JSON.stringify({

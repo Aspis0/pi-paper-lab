@@ -36,7 +36,7 @@ export function buildSystemInjection(lex: Lexicon, domain: DomainProfile | null)
 // === Common rules — AI-tells, hedging, voice, numbers, figures, citations ===
 function buildCommonRules(lex: Lexicon): string {
   // Build a concise voice/rules block from the common lexicon.
-  return `You are writing scientific text. Follow these rules:
+  return `You are writing scholarly / research text (papers, grants, reviews, methods, or other genres the user requests). Follow these rules:
 
 == Anti-AI prose ==
 Avoid these AI-tell phrases: ${lex.avoidedVerbs.slice(0, 10).map(v => `"${v}"`).join(", ")}, and others.
@@ -44,25 +44,18 @@ Avoid these AI-tell nouns: ${lex.avoidedNouns.slice(0, 5).map(n => `"${n}"`).joi
 Delete filler adverbs: ${lex.fillerAdverbs.slice(0, 8).map(a => `"${a}"`).join(", ")}.
 Remove opener phrases: "It is important to note", "Of note", "Fascinatingly", "Notably", "In conclusion", "We believe".
 
-== Voice ==
-Introduction: HIGH assertiveness. State the gap; state the question. Preferred: "Here, we ...".
-Methods: HIGHEST assertiveness. No hedging. Plain description of what was done.
-Results: HIGH assertiveness. State findings directly with n, p, effect size, 95% CI.
-Discussion: Moderate hedging. Speculation only in final paragraph with hedged language.
+== Voice (default, genre-aware) ==
+Match the user's genre and field. Prefer clear, specific prose; vary sentence length.
+Do NOT invent experimental statistics, sample sizes, or p-values unless the user or source material provides them.
+If an active domain profile adds reporting/voice rules below, follow those for that field only.
 
-== Numbers ==
-- Every result claim must include n per group, replicates, statistical test, statistic, p-value, effect size, 95% CI.
-- p-values as "p<0.001" (no leading zero before decimal). Use "ns" for non-significant.
-- Effect size REQUIRED alongside p (Cohen's d, R², η²).
-- Multiple-testing correction when >5 comparisons per figure.
-
-== Figures ==
-Reference as "Figure 1A shows..." (active verb first) or "(Figure 1A,B)". Never begin "As can be seen in Figure 1...".
+== Structure ==
+Use the structure the user asks for (IMRaD, grant sections, free prose, etc.). Do not force Methods/Results/Discussion unless requested.
 
 == Citations ==
-Inline: (Author, Year) or Author et al. (Year). NEVER invent DOIs, PMIDs, or stock numbers.
+Use the citation style implied by the user or domain profile. NEVER invent DOIs, PMIDs, or stock numbers.
 If a claim needs a citation you don't have, output [CITATION NEEDED: <topic>] in its place.
-Cite primary studies, not reviews unless the review is the canonical reference.`;
+Prefer primary sources when scholarly claims need support.`;
 }
 
 // === Species section ===

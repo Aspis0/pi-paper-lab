@@ -4,10 +4,31 @@
 
 import { searchScholar, formatScholarResults, type ScholarResult } from "./serper-scholar.ts";
 import { searchExa, type ExaSearchResult } from "./exa-scholar.ts";
-import { loadConfig } from "./config.ts";
-import { lookupDoi, formatCrossRefWork, type CrossRefWork } from "./crossref.ts";
-import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
+import { getCitationBackend, getSerperKey } from "./config.ts";
+import { lookupDoi, normalizeWork, type CrossRefWork } from "./crossref.ts";
+import { crossrefToCsl, stripJats } from "./csl/adapters/crossrefToCsl.ts";
 import { formatBibliography as formatCslBibliography } from "./csl/formatBibliography.ts";
+
+/** Max abstract chars shown in find_citation / formatResolveResult candidates. */
+const CANDIDATE_ABSTRACT_CAP = 1200;
+
+/** Bounds for find_citation / resolveCitation `numResults` (abstracts multiply cost). */
+export const CITATION_NUM_RESULTS_MIN = 1;
+export const CITATION_NUM_RESULTS_MAX = 10;
+export const CITATION_NUM_RESULTS_DEFAULT = 5;
+
+/**
+ * Clamp per-source result count to [1, 10]. Non-finite / non-number → default 5.
+ * Used by find_citation and resolveCitation so unbounded inputs cannot explode
+ * Crossref/Serper/Exa fan-out once abstracts are returned.
+ */
+export function clampCitationNumResults(n: unknown): number {
+  if (typeof n !== "number" || !Number.isFinite(n)) return CITATION_NUM_RESULTS_DEFAULT;
+  return Math.min(
+    CITATION_NUM_RESULTS_MAX,
+    Math.max(CITATION_NUM_RESULTS_MIN, Math.trunc(n)),
+  );
+}
 
 // === [CITE:topic] marker ===
 // A claim that needs a source is marked with [CITE:topic_description].
@@ -123,6 +144,8 @@ export interface ResolveResult {
     link?: string;
     source: "scholar" | "crossref" | "exa";
     snippet?: string;
+    /** Plain-text abstract (JATS-stripped). Present for Crossref when available. */
+    abstract?: string;
     citations?: number;
   }>;
   // Search-backend failures (e.g. missing key, network error, HTTP error).
@@ -136,13 +159,11 @@ export async function resolveCitation(
   topic: string,
   opts?: { signal?: AbortSignal; numResults?: number },
 ): Promise<ResolveResult> {
-  const num = opts?.numResults ?? 5;
+  const num = clampCitationNumResults(opts?.numResults);
   const candidates: ResolveResult["candidates"] = [];
   const warnings: string[] = [];
-  const backend = loadConfig().citation_backend ?? "serper";
-  const config = loadConfig();
-  const hasSerperKey = !!(process.env.SERPER_API_KEY ?? config.serper);
-  const hasExaKey = !!(process.env.EXA_API_KEY ?? config.exa);
+  const backend = getCitationBackend();
+  const hasSerperKey = !!getSerperKey();
 
   // Helper: run Serper, push results
   const runSerper = () => searchScholar(topic, { num, signal: opts?.signal }).then(r => {
@@ -198,19 +219,16 @@ export async function resolveCitation(
     // Parallel query
     await Promise.allSettled([runSerper(), runExa()]);
   } else if (backend === "auto") {
-    // Per plan: try Exa first, fall back to Serper on failure or empty results.
-    if (hasExaKey) {
-      const exaCount = await runExa();
-      if (exaCount === 0 && hasSerperKey) {
-        // Exa returned 0 — treat as weak signal, fall back to Serper.
-        await runSerper();
-      }
-    } else if (hasSerperKey) {
-      // No Exa key — use Serper directly.
+    // Prefer Exa: REST when key present, else free unauthenticated MCP
+    // (https://mcp.exa.ai/mcp — rate-limited). Then Serper if keyed; CrossRef always.
+    const exaCount = await runExa();
+    if (exaCount === 0 && hasSerperKey) {
       await runSerper();
     }
-    // If neither key: candidates stay empty (CrossRef will still fill in).
+    // CrossRef below still fills DOIs even with zero paid keys.
   }
+  // backend === "crossref": intentionally no Scholar/Exa call here — the
+  // CrossRef lookup below always runs, which is exactly "CrossRef only".
 
   // CrossRef search by topic (always runs, for DOI + Vancouver citation)
   // 2. CrossRef search by topic (smart query — filter to journal articles only)
@@ -222,19 +240,8 @@ export async function resolveCitation(
     if (crossRes.ok) {
       const crossData = await crossRes.json() as { message?: { items?: any[] } };
       for (const rawW of crossData.message?.items ?? []) {
-        // Normalize CrossRef API keys: DOI (uppercase), date-parts, container-title (kebab)
-        const w: CrossRefWork = {
-          doi: rawW.DOI ?? rawW.doi,
-          title: rawW.title ?? [],
-          author: rawW.author ?? [],
-          published: rawW.published ? { dateParts: (rawW.published["date-parts"] ?? rawW.published.dateParts ?? [])[0] ?? [] } : undefined,
-          publishedPrint: rawW["published-print"] ? { dateParts: (rawW["published-print"]["date-parts"] ?? [])[0] ?? [] } : undefined,
-          publishedOnline: rawW["published-online"] ? { dateParts: (rawW["published-online"]["date-parts"] ?? [])[0] ?? [] } : undefined,
-          containerTitle: rawW["container-title"] ?? rawW.containerTitle ?? [],
-          volume: rawW.volume,
-          issue: rawW.issue,
-          page: rawW.page,
-        };
+        // Shared normalizer — same shape as lookupDoi (DOI casing, published/issued).
+        const w = normalizeWork(rawW);
         if (!w.doi) continue;
         const authors = w.author
           .map((a) => (a.family ? `${a.given ?? ""} ${a.family}`.trim() : a.name ?? "?"))
@@ -244,6 +251,7 @@ export async function resolveCitation(
           w.publishedPrint?.dateParts?.[0] ??
           w.publishedOnline?.dateParts?.[0] ??
           "?";
+        const abstract = stripJats(w.abstract);
         candidates.push({
           title: w.title?.[0] ?? "(untitled)",
           authors,
@@ -251,6 +259,7 @@ export async function resolveCitation(
           venue: w.containerTitle?.[0],
           doi: w.doi,
           source: "crossref",
+          ...(abstract ? { abstract: abstract.slice(0, CANDIDATE_ABSTRACT_CAP) } : {}),
         });
       }
     }
@@ -303,7 +312,20 @@ export function formatResolveResult(r: ResolveResult): string {
     if (c.doi) lines.push(`      DOI: ${c.doi}`);
     if (c.link) lines.push(`      Link: ${c.link}`);
     if (c.citations !== undefined) lines.push(`      Citations: ${c.citations}`);
-    if (c.snippet) lines.push(`      Snippet: ${c.snippet.slice(0, 150)}`);
+    // Prefer Abstract when present (Crossref); otherwise keep Snippet (Serper/Exa).
+    if (c.abstract) {
+      // Collapse interior whitespace so multi-<jats:p> abstracts stay one
+      // `Key: value` line (newlines would break indentation / Source: position).
+      // Cap at CANDIDATE_ABSTRACT_CAP (1200) and append "…" when truncated.
+      const collapsed = c.abstract.replace(/\s+/g, " ").trim();
+      const truncated = collapsed.length > CANDIDATE_ABSTRACT_CAP;
+      const text = truncated
+        ? `${collapsed.slice(0, CANDIDATE_ABSTRACT_CAP)}…`
+        : collapsed;
+      lines.push(`      Abstract: ${text}`);
+    } else if (c.snippet) {
+      lines.push(`      Snippet: ${c.snippet.slice(0, 150)}`);
+    }
     lines.push(`      Source: ${c.source}`);
     lines.push("");
   });
