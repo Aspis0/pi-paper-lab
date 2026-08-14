@@ -218,15 +218,19 @@ After publish to npm (see [PUBLISHING.md](./PUBLISHING.md)), anyone can install 
 
 ## Security
 
-`npm audit` reports **1 known HIGH vulnerability** in the dependency tree:
+`npm audit` reports **0 vulnerabilities** as of v0.7.9 (`@earendil-works/pi-coding-agent@0.84.1`).
 
-- `brace-expansion@≤5.0.7` (transitive via `@earendil-works/pi-coding-agent` → `minimatch`).
-  - GHSA-mh99-v99m-4gvg — DoS via unbounded brace expansion causing out-of-memory crash.
-  - Impact: requires a malicious input file passed to `minimatch` glob patterns. The extension does not call `minimatch` directly with user input; risk for normal use is low.
-  - Status: `npm overrides` cannot fully force-rewrite this transitive copy (known npm CLI bug for nested deps, npm/cli#9659). The fix will land automatically when `@earendil-works/pi-coding-agent` updates its `minimatch` dependency.
-  - `npm audit` is wired into the `prepack` script so any new HIGH vulnerability blocks the next publish.
+The previous HIGH findings are resolved:
 
-To audit locally: `npm run audit` (or `npm audit --audit-level=high`).
+- `brace-expansion@≤5.0.7` (GHSA-mh99-v99m-4gvg) — fixed by upgrading to
+  `@earendil-works/pi-coding-agent@0.84.1`, whose `minimatch` now resolves
+  `brace-expansion@5.0.9` (patched ≥5.0.8).
+- `undici@≤8.8.0` (5 advisories, e.g. GHSA-8xcm-r25x-g524) — fixed by the
+  same upgrade (`undici@8.9.0`).
+
+To audit locally: `npm run audit` (or `npm audit --audit-level=high`). Audit
+is a standalone script — it is not part of `prepack`, so a transient advisory
+never blocks publishing.
 
 ## License
 

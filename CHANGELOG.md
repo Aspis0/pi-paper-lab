@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.9 — dependency security bump (@earendil-works/pi-* 0.84.1)
+
+- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai`: `^0.82.1` → `^0.84.1`.
+- Resolves BOTH known HIGH findings: `brace-expansion@≤5.0.7`
+  (GHSA-mh99-v99m-4gvg, now `5.0.9` in tree) and `undici@≤8.8.0`
+  (5 advisories, now `8.9.0`). `npm audit`: **0 vulnerabilities**.
+- Full gate green on the new API: typecheck, 360/360 tests, smoke, smoke:csl.
+
+
 ## v0.7.8 — keyless citations, field-neutral prompts, CrossRef hardening
 
 ### Citations work with ZERO API keys (Exa free MCP + CrossRef)
