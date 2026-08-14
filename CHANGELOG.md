@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.7.10 — metadata cleanup + remove broken publish workflow
+
+- Description/keywords: removed biology-specific terms (Drosophila, mouse,
+  cancer, …) — now purely domain-agnostic ("custom YAML profiles").
+- Removed `.github/workflows/publish.yml`: it had never succeeded in 20/20
+  runs (network-dependent test step + Trusted Publishing never configured),
+  and all versions were always published manually. Publishing is now manual
+  only — see PUBLISHING.md. No more error emails on tag pushes.
+- PUBLISHING.md rewritten for the manual-only flow.
+
+
 ## v0.7.9 — dependency security bump (@earendil-works/pi-* 0.84.1)
 
 - `@earendil-works/pi-coding-agent` + `@earendil-works/pi-ai`: `^0.82.1` → `^0.84.1`.

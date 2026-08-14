@@ -1,7 +1,7 @@
 {
   "name": "pi-paper-lab",
-  "version": "0.7.9",
-  "description": "Writing-style guardrails for scientific text in pi. Anti-AI rewrite, automatic Vancouver citations, .docx output. Domain-agnostic (Drosophila, mouse, cancer, C. elegans, neuroscience, custom YAML profiles).",
+  "version": "0.7.10",
+  "description": "Writing-style guardrails for scholarly text in pi. Anti-AI rewrite, automatic citations, .docx output. Domain-agnostic with custom YAML profiles.",
   "type": "module",
   "main": "extensions/index.ts",
   "bin": {
@@ -43,13 +43,10 @@
     "pi",
     "pi-coding-agent",
     "extension",
+    "scholarly-writing",
     "scientific-writing",
     "anti-ai",
     "citations",
-    "drosophila",
-    "mouse",
-    "cancer",
-    "biology",
     "docx"
   ],
   "license": "MIT",
