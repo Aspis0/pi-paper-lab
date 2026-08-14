@@ -1,9 +1,10 @@
 # Changelog
 
-## v0.7.6 — pipeline rewrite-loop fixes + hostile-audit (silentRewrite safety, citation round-trip)
+## v0.7.7 — Anti-AI detector recalibration + citation search-failure safety
 
-A hostile audit after the pipeline fixes found 12 more bugs; all fixed.
-328/328 tests pass (+21 new across both rounds). Typecheck clean.
+Corpus-calibrated anti-AI detector (24 pre-ChatGPT papers) and a citation
+resolver that never fakes sources on search-backend failure. Fixes ported onto
+the v0.7-dev tree on 2026-08-03; released 0.7.7.
 
 ### AI detector recalibration (density + MATTR; threshold 40 → 30)
 
@@ -42,6 +43,11 @@ Search-backend failures (Serper/Exa) used to be pushed into
 which the pipeline treated as found sources — the worst failure mode for a
 citation resolver. Failures now go to `ResolveResult.warnings` only;
 `find_citation` surfaces them in tool details.
+
+## v0.7.6 — pipeline rewrite-loop fixes + hostile-audit (silentRewrite safety, citation round-trip)
+
+A hostile audit after the pipeline fixes found 12 more bugs; all fixed.
+328/328 tests pass (+21 new across both rounds). Typecheck clean.
 
 ### silentRewrite runs on EVERY assistant message — it was corrupting non-prose (#2, #5, #6)
 
