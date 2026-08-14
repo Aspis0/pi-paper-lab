@@ -5,7 +5,9 @@
 import { searchScholar, formatScholarResults, type ScholarResult } from "./serper-scholar.ts";
 import { searchExa, type ExaSearchResult } from "./exa-scholar.ts";
 import { loadConfig } from "./config.ts";
-import { lookupDoi, formatCrossRefWork, formatVancouver, type CrossRefWork } from "./crossref.ts";
+import { lookupDoi, formatCrossRefWork, type CrossRefWork } from "./crossref.ts";
+import { crossrefToCsl } from "./csl/adapters/crossrefToCsl.ts";
+import { formatBibliography as formatCslBibliography } from "./csl/formatBibliography.ts";
 
 // === [CITE:topic] marker ===
 // A claim that needs a source is marked with [CITE:topic_description].
@@ -123,6 +125,11 @@ export interface ResolveResult {
     snippet?: string;
     citations?: number;
   }>;
+  // Search-backend failures (e.g. missing key, network error, HTTP error).
+  // Kept OUT of `candidates` — a failed search must never be presented as a
+  // found source (that was the root cause of citations showing a fake
+  // "(Serper Scholar search failed: …)" entry as if it were a reference).
+  warnings: string[];
 }
 
 export async function resolveCitation(
@@ -131,6 +138,7 @@ export async function resolveCitation(
 ): Promise<ResolveResult> {
   const num = opts?.numResults ?? 5;
   const candidates: ResolveResult["candidates"] = [];
+  const warnings: string[] = [];
   const backend = loadConfig().citation_backend ?? "serper";
   const config = loadConfig();
   const hasSerperKey = !!(process.env.SERPER_API_KEY ?? config.serper);
@@ -152,12 +160,9 @@ export async function resolveCitation(
       });
     }
   }).catch(err => {
-    candidates.push({
-      title: `(Serper Scholar search failed: ${String(err).slice(0, 80)})`,
-      authors: "",
-      year: "?",
-      source: "scholar",
-    });
+    // N.B. do NOT push this into `candidates` — a failed search is not a
+    // source. See the `warnings` field on ResolveResult.
+    warnings.push(`Serper Scholar search failed: ${String(err).slice(0, 200)}`);
   });
 
   // Helper: run Exa, push results. Returns true if any results added.
@@ -178,12 +183,8 @@ export async function resolveCitation(
       }
       return exaResults.length;
     } catch (err) {
-      candidates.push({
-        title: `(Exa search failed: ${String(err).slice(0, 80)})`,
-        authors: "",
-        year: "?",
-        source: "exa",
-      });
+      // Same rule as Serper: failures are warnings, never fake candidates.
+      warnings.push(`Exa search failed: ${String(err).slice(0, 200)}`);
       return 0;
     }
   };
@@ -257,7 +258,7 @@ export async function resolveCitation(
     // CrossRef is optional
   }
 
-  return { topic, candidates: dedupeCandidates(candidates) };
+  return { topic, candidates: dedupeCandidates(candidates), warnings };
 }
 
 // N3 fix: deduplicate candidates by DOI (keep first occurrence)
@@ -282,8 +283,16 @@ function dedupeCandidates(candidates: ResolveResult["candidates"]): ResolveResul
 export function formatResolveResult(r: ResolveResult): string {
   const lines: string[] = [];
   lines.push(`=== [CITE:${r.topic}] — candidates ===`);
+  if (r.warnings.length > 0) {
+    lines.push("  Warnings (search backend failures — do NOT treat as a source):");
+    for (const w of r.warnings) lines.push(`    - ${w}`);
+  }
   if (r.candidates.length === 0) {
-    lines.push("  No candidates found.");
+    lines.push(
+      r.warnings.length > 0
+        ? "  No candidates found (search backend(s) failed — see warnings above)."
+        : "  No candidates found.",
+    );
     return lines.join("\n");
   }
   r.candidates.forEach((c, i) => {
@@ -354,9 +363,10 @@ export async function generateBibliography(
     try {
       const work = await lookupDoi(doi);
       if (work) {
+        const csl = crossrefToCsl(work, doi);
         bibliography.push({
           number: num,
-          citation: formatVancouver(work, doi),
+          citation: formatCslBibliography([csl], { style: "vancouver" }),
           doi,
         });
       } else {

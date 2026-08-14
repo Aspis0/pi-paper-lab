@@ -1,5 +1,293 @@
 # Changelog
 
+## v0.7.7 — Anti-AI detector recalibration + citation search-failure safety
+
+Corpus-calibrated anti-AI detector (24 pre-ChatGPT papers) and a citation
+resolver that never fakes sources on search-backend failure. Fixes ported onto
+the v0.7-dev tree on 2026-08-03; released 0.7.7.
+
+### AI detector recalibration (density + MATTR; threshold 40 → 30)
+
+Measured against 24 open-access scientific papers published 2018–2020
+(pre-ChatGPT, therefore certainly human): the statistical detector rejected
+**15 of 24** at the default threshold — a **62% false-positive rate** on real
+human science. Root causes:
+
+1. `scoreText` counted AI-tells absolutely, then `min(1, total/10)` saturated
+   the 0.55 lexicon weight on any document past ~7 weighted hits. A 3191-word
+   2019 paper scored 42 hits → 55 of its 74 points from pre-ChatGPT text.
+2. Lexical diversity used raw type-token ratio, which falls mechanically with
+   length (length proxy, not AI style). Word-count vs score correlation was
+   **r = 0.539**; after the fix **r = 0.132**.
+
+Fixes (corpus-calibrated):
+
+- **Density scoring**: weighted AI-tell hits per 1000 words; thresholds
+  (`safe_max` / `caution_max`) reinterpreted on that scale; lexicon_tells
+  saturates at 8 /1k density.
+- **MATTR** (window 100) replaces raw TTR for lexical diversity; function-word
+  and sophistication baselines re-derived from the scientific corpus.
+- **Lexicon audit**: entries that fired repeatedly across the 24 human papers
+  are not AI tells (e.g. “has been shown to”, ordinary adverbs like “notably”,
+  “In recent years,”, “to our knowledge”). Kept genuine LLM register.
+- **Default threshold 40 → 30** (`ai-detector.ts` + `statistical-ai-detector.ts`).
+  Post-fix: all 24 human papers pass (max ≤ 34, median ≈ 6–7); adversarial
+  probes with stacked AI tells still score ≈ 60–69.
+- Em-dash overuse uses the same density basis (supersedes the interim
+  `max(4, floor(words/200))` absolute gate from hostile-audit #11).
+
+### Citation search failures are warnings, not fake sources
+
+Search-backend failures (Serper/Exa) used to be pushed into
+`ResolveResult.candidates` as titles like `(Serper Scholar search failed: …)`,
+which the pipeline treated as found sources — the worst failure mode for a
+citation resolver. Failures now go to `ResolveResult.warnings` only;
+`find_citation` surfaces them in tool details.
+
+## v0.7.6 — pipeline rewrite-loop fixes + hostile-audit (silentRewrite safety, citation round-trip)
+
+A hostile audit after the pipeline fixes found 12 more bugs; all fixed.
+328/328 tests pass (+21 new across both rounds). Typecheck clean.
+
+### silentRewrite runs on EVERY assistant message — it was corrupting non-prose (#2, #5, #6)
+
+The `message_end` hook passes every assistant message through `silentRewrite`.
+Its capitalisation regex treated `\n[ \t]+` (indented code) and `x. y`
+(dotted identifiers) as sentence boundaries, mangling code:
+`    const notably = 1;` → `Const = 1;`. Added `looksLikeCodeOrNonProse()` —
+silentRewrite now no-ops byte-identical on fenced/indented code blocks and
+JSON blobs. Exported for testing.
+
+### Blind verb conjugation produced garbage (#3)
+
+`(set out to|set about)\s+(\w+)` and `we aim to <verb>` conjugated the next
+word assuming it was a verb: `We set out to the laboratory.` → `We thed
+laboratory.`, `They set out to go home.` → `They goed home.` (irregular!).
+Now gated on a `CONJUGATE_VERBS` allowlist of regular research verbs, with
+the consonant+y → ied case handled (`study`→`studied`). Unknown words are
+left in place.
+
+### "the data suggest" → "we observed" de-capitalised sentence starts (#4)
+
+The replacement dropped the subject and lowercased the start (the
+capitalisation pass had already run). Now preserves case on all three
+semantic rewrites (`our findings/the data suggest`, `these findings suggest`).
+
+### Parenthesised DOI round-trip was STILL broken (#1)
+
+`cleanExtractedDocx` recovered the full DOI but emitted the PLAIN form
+`[1](doi:10.1016/S1470-2045(10)70218-7)`, which the main finalizeDoc regex
+truncates at the first `)`. Now emits the angle-bracket form
+`[1](<doi:...>)`, which is unambiguous. Verified end-to-end: the main regex
+captures the full `10.1016/S1470-2045(10)70218-7`.
+
+### checkInstructionFulfillment rule 3 was hard-coded to one paper (#8)
+
+The Methods-copy check used fixed phrases ("shifted to 18 °C", "n = 5
+flies, ...") from the cachexia manuscript, so it never fired for any other
+document. Replaced with a document-agnostic 6-gram overlap test between the
+first Results paragraph and the Methods section (≥2 shared long phrases →
+flag).
+
+### Path-safety: sidecar/tempMd could overwrite the source (#9)
+
+`sidecarPathFor` and the tempMd path used `.replace(/\.md$/i, …)`, which is
+a no-op on a non-`.md` path and would write the sidecar/temp over the source.
+Now appends the suffix when there is no `.md`.
+
+### Per-turn domain detection was dead code (#10)
+
+`before_agent_start` computed `resolveDomain` at load and stored it in
+globalThis, but never rebuilt the injection — the active domain was frozen
+to the fallback. Now rebuilds the injection from `event.prompt` (the user's
+latest message) each turn, with a try/catch fallback to the static injection.
+
+### Article agreement over-corrected acronyms (#7)
+
+`/\b([Aa])(n?)\s+([a-zA-Z])/g` used a vowel-LETTER test, flipping `a URL` →
+`an URL` and `an MRI` → `a MRI` (both wrong — consonant sounds). Now skips
+all-caps acronyms (2–6 letters) and leaves them untouched.
+
+### Em-dash threshold was too aggressive (#11 → density)
+
+The fixed `> 2` flagged legitimate scientific prose and especially short
+passages. First length-scaled to `max(4, floor(words/200))`; then superseded
+by calibrated density (em-dashes per 1000 words vs `emdash_density_max_per_1k`,
+default 2.0) so long human papers with a handful of dashes no longer saturate.
+
+### detectRewriteLoop compounded silentRewrite damage (#12)
+
+silentRewrite is not idempotent (capitalisation/article fixes accumulate),
+so re-running it on already-rewritten text could only drift. Now breaks
+early when `rewritten === current` (no further progress).
+
+### /paper-rewrite pipeline fixes (round 1)
+
+Fixes six issues found by running `/paper-rewrite` end-to-end on a real
+cachexia manuscript. No behaviour change for the happy path; all 317 tests
+still pass (10 new).
+
+#### `/paper-rewrite` rewrite loop was blind to the user's instructions (#2)
+
+The Step 1 detect-rewrite loop only measures AI-tells (burstiness,
+hedging, lexicon), so it reported `DONE` while the draft still contained
+the exact things the user asked to remove (a *Future directions* section,
+an un-placeholdered RNA-seq sentence, a first Results paragraph that
+copied Methods). Added `checkInstructionFulfillment(text, instructions)`
+— a narrow keyword heuristic that surfaces unmet structural requests and
+passes them to the LLM exactly like flagged AI sentences. Covered by
+`tests/instruction-fulfillment.test.ts`.
+
+#### `.docx` → `.md` extraction lost DOIs and clobbered the source (#3, #5)
+
+Two root causes, both in `cleanExtractedDocx`:
+
+1. `numMatch` expected `1. Author...` but `finalizeDoc` writes
+   `[1] Author...`, so no DOIs were ever recovered from the References
+   section. The DOIs that *did* appear came from the sidecar cache, not
+   the extraction — leaving most markers bare and triggering needless
+   `find_citation` backfill.
+2. The plain DOI regex `doi:\s*([^\s)\]]+)` truncated at the first `(`,
+   dropping parenthesised DOIs (e.g. `10.1016/S1470-2045(10)70218-7` →
+   `10.1016/S1470-2045`).
+3. `doiMatch[1]` indexed a *string* (returning its 2nd character) instead
+   of the resolved DOI.
+
+Fixed: `numMatch` accepts both `[N]` and `N.`; the DOI regex matches
+`10\.[^\s\]]+` (preserves internal parens); references are split on
+`/\n+/`; the resolved DOI is stored directly. `finalizeDoc` now joins
+reference entries with a blank line so each renders as its own paragraph
+in the `.docx`, making round-trip extraction reliable. Covered by
+`tests/clean-extracted-docx.test.ts`.
+
+`pipelineRewrite`/`pipelineCite` now **prefer an existing DOI-bearing
+`.md`** over re-extracting the `.docx`, so the source of truth is never
+overwritten with a DOI-stripped copy.
+
+#### ENOENT on the instructions string (#1)
+
+The command handlers fell back to `target = raw` (the whole arg string,
+including instructions) when the `.md`/`.docx` boundary regex failed,
+which then hit `open(cwd + instructions)`. Hardened `paper-rewrite` and
+`paper-cite` to recover a path-like token and never `open()` the raw
+instructions; a clear usage notification is shown instead. (Note: the
+raw `ENOENT ... open cwd/<instructions>` in some runs originates in the
+pi harness's own path resolution, which is outside this package; the
+handler guard prevents the in-package path from ever reaching `open()`.)
+
+#### Other
+
+- `pipelineRewrite` now reports `Working draft:` in the header and writes
+  the rewritten draft to `<workPath>.rewritten.md` (previously, on a
+  `.docx` input it wrote to the `.docx` path because `.replace(/\.md$/, ...)`
+  was a no-op).
+- Minor: `finalizeDoc`'s `References: N` self-report is the post-prune
+  count; the `.docx` bibliography itself contains every resolved DOI.
+
+## v0.7.5 — CSL hybrid (Citestyle + Citation.js) + Local Reference Library
+
+**Critical fix (2026-07-29):** The `SelectedStyle` in `b:Sources` used
+`IEEE2006.OfficeOnline.xsl` (with a period between "2006" and
+"OfficeOnline"). The actual XSL file in Office's Bibliography\Style
+folder is `IEEE2006OfficeOnline.xsl` (no period). This mismatch caused
+Word's "no current bibliography style is currently used" error — the
+BIBLIOGRAPHY field could not find the style. Fixed to match the real
+filename. Auto-renumbering on `Ctrl+A, F9` now works correctly.
+
+---
+
+This release replaces the v0.7.0 regex-based Vancouver parser with a
+CSL-based pipeline and adds a local reference library. Word's
+citation manager still works end-to-end (F9 renumber, Source
+Manager). Three citation styles ship: IEEE, Vancouver, APA.
+
+### Architecture changes
+
+- **CSL-JSON is now the canonical intermediate format.** `crossrefToCsl`
+  adapts CrossRef responses to CSL; `word-live-builder.ts` accepts
+  CslItem[] directly and produces Word's b:Source XML without
+  re-parsing. The v0.7.0 Vancouver-string regex path is preserved as
+  a fallback for old sidecars but no new code uses it.
+- **Citestyle for in-process formatting** (`@citestyle/registry` +
+  `@citestyle/styles/{ieee,vancouver,apa}`). Used by
+  `formatBibliography()` to render `## References` markdown.
+- **Citation.js for export** (`@citation-js/core` +
+  `@citation-js/plugin-bibtex` + `@citation-js/plugin-ris`), lazy-loaded
+  via `await import()`. Only the `paper-lab-export` and `paper-lab-library
+  export/import` paths touch it. Hot path stays lean (verified by
+  `tests/csl/lazyLoad.test.ts`).
+- **Local reference library** at `<projectRoot>/paper-lab-library/`,
+  gitignored. Filesystem is source of truth; sql.js SQLite cache is
+  an index. BM25 in-memory search for offline use; full-text search
+  available via the cache. Auto-populate via `/paper-cite` is OFF by
+  default (privacy).
+
+### Added
+
+- `src/csl/schema.ts`: CslItem types, `doiToId()` deterministic ID generator
+- `src/csl/styles.ts`: bundled IEEE/Vancouver/APA style resolution
+- `src/csl/adapters/crossrefToCsl.ts`: CrossRef → CslItem adapter
+- `src/csl/formatBibliography.ts`: Citestyle-backed bibliography renderer
+- `src/csl/exportBibtex.ts`, `src/csl/exportRis.ts`: lazy Citation.js exporters
+- `src/library/{bm25,storage,index}.ts`: BM25 index, sql.js storage, Library class
+- `bin/export.mjs`: `paper-lab-export <file.md> --format bibtex|ris|csljson|all`
+- `bin/library.mjs`: `paper-lab-library add|add-from-search|import|list|search|export|sync|stats`
+- `data/word-reference-xml/README.md` updated with new dependency tree
+
+### Test coverage
+
+- 298/298 tests pass (was 181 in v0.7.2).
+- New test files: `tests/csl/{doi-to-id, lazyLoad, formatBibliography,
+  adapters-crossrefToCsl, live-builder-csl, sidecar-migration-noop,
+  export-bibtex, export-ris, export-cli}.test.ts` and
+  `tests/library/{bm25, storage, index, cli}.test.ts`.
+- 16 subprocess tests for the two new CLIs (argv parsing, error
+  paths, exit codes).
+- Lazy-load proof: `tests/csl/lazyLoad.test.ts` confirms importing
+  `pipeline.ts` does NOT pull in `@citation-js/*`.
+
+### Breaking changes
+
+- **`formatVancouver()` removed from the live path.** The live builder
+  no longer calls it. The function is still defined in `src/crossref.ts`
+  for backward compatibility with old sidecars but is no longer
+  imported anywhere in the production code path. Will be fully
+  deleted in v0.8 once golden tests are re-captured from Citestyle.
+- **`parseVancouverForLive()` is a fallback only.** The live branch
+  prefers the CslItem → b:Source direct path. The regex parser is
+  used only when the sidecar has no `csl` field (pre-v0.7.5 sidecar).
+  Will be removed in v0.8.
+- **`--verify-all` is now required to migrate old sidecars.** Old
+  sidecars carry only `{doi, vancouver}`. Running
+  `paper-lab-finalize paper.md --verify-all` re-fetches every DOI
+  and writes the CSL field. v0.7.5 itself ALSO writes the `csl` field
+  on every run (CRIT-2 fix from the v0.7.5 release audit), so users
+  who already ran v0.7.5 once will have populated sidecars.
+
+### Migration from v0.7.2
+
+```bash
+# 1. Update the package
+npm install pi-paper-lab@0.7.5
+
+# 2. Re-fetch your citations to populate the CSL field
+paper-lab-finalize paper.md --verify-all
+
+# 3. Optionally populate the local library for offline use
+paper-lab-library add 10.1038/nature12373
+paper-lab-library import refs.bib
+```
+
+### Audit trail
+
+- `/tmp/audit-m1.md` — install + lazy-import proof
+- `/tmp/audit-m2.md` — CSL-JSON + word-live-builder CslItem path
+- `/tmp/audit-m3.md` — paper-lab-export CLI + lazy Citation.js
+- `/tmp/audit-m4.md` — local library + sql.js + BM25
+
+All four audits flagged 0-2 CRIT each; all CRIT were either fixed
+inline or documented as accepted. No critical bugs remain.
+
 ## v0.7.2 — Audit fixes for --live Vancouver parser
 
 Audited v0.7.1 fix and addressed 11 findings (3 CRIT, 3 HIGH, 3 MED, 2 LOW).

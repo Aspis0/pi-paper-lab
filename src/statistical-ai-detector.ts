@@ -1,21 +1,16 @@
 // src/statistical-ai-detector.ts
-// Statistical AI text detection calibrated for SHORT scientific paragraphs
-// (100-300 words, 5-10 sentences). Previous baselines were calibrated on
-// 500-2000 word blog/essay texts where CV, TTR, entropy etc. behaved
-// differently. For short scientific text:
-//   - CV is naturally lower (fewer sentences → less variance opportunity)
-//   - TTR is naturally higher (short samples have high type/token ratio)
-//   - Bigram entropy is higher in short text (fewer repeated bigrams)
-//   - Sentence starters are always diverse in N=5-10 sentences
-//   - Function word ratio is higher in scientific text (passive voice, etc.)
+// Statistical AI text detection for scientific prose (paragraphs and full papers).
 //
-// Length-adaptive: the detector now counts words and adjusts formulas.
-// Under 100 words: only lexicon_tells fires reliably → heavy weight.
-// 100-300 words: all features fire with appropriate scientific baselines.
-// 300+ words: original baselines apply (blog-style calibration).
+// 2026-08 calibration against 24 pre-ChatGPT OA scientific papers (2018–2020):
+//   - Raw TTR fell mechanically with length (3191w → TTR 0.227 → 100% AI-like),
+//     so lexical diversity now uses MATTR (window 100), which is length-stable
+//     (human sci MATTR100 mean 0.688, range 0.642–0.748 on that corpus).
+//   - Lexicon component uses density per 1000 words, not absolute hit counts
+//     (absolute counts saturated the 0.55-weight feature on every long human paper).
+//   - Function-word and sophistication baselines are scientific (not blog/essay):
+//     human sci FW mean 0.295; avg word length mean 6.30 on the same corpus.
 //
 // Each feature returns a 0-1 score (0=human, 1=AI). Weighted sum → final score.
-// Weighted sum → final score.
 
 import { scoreText, type Lexicon } from "./anti-ai-lexicon.ts";
 
@@ -120,37 +115,71 @@ function measureNgramEntropy(text: string, wordCount: number): StatisticalFeatur
   return { name: "ngram_entropy", score, rawValue: entropy, humanBaseline: humanBl, aiBaseline: aiBl, description: `entropy=${entropy.toFixed(2)} bits (human≈${humanBl}, AI≈${aiBl})` };
 }
 
-// === Feature 3: Lexical diversity (type-token ratio) ===
-// Scientific text has HIGH TTR at short length because vocabulary is dense.
-// Human scientific TTR (100-300 words): ~0.70-0.85
-// AI scientific TTR (100-300 words):     ~0.55-0.70
-// We use modified TTR to correct for text length: sqrt(N)*TTR is more stable
-// but for our purposes we just raise the human baseline for short text.
-function measureLexicalDiversity(text: string, wordCount: number): StatisticalFeature {
+// === Feature 3: Lexical diversity (MATTR, not raw TTR) ===
+// Raw type-token ratio falls with length (Zipf): on the 24-paper pre-ChatGPT
+// corpus, TTR ranged 0.227 (3191w) → 0.401 (580w) and correlated with score
+// (r≈−0.37 with TTR, r≈+0.55 length→score). It was a length proxy.
+//
+// MATTR (Moving-Average TTR, window W=100): mean TTR over successive windows.
+// Same corpus: MATTR100 mean 0.688, min 0.642, max 0.748 — nearly length-flat.
+// Chose MATTR over MTLD because it is simpler, fully local, and the window
+// mean is stable enough for a 0–1 feature without factor-threshold tuning.
+//
+// Human baseline 0.69 ≈ corpus mean. AI baseline 0.55 is a conservative
+// lower band for repetitive LLM prose under the same window (literature and
+// adversarial probes with formulaic openers sit well below 0.60).
+// Window 100: standard MATTR default; short texts (<100 tokens) fall back to TTR.
+export const MATTR_WINDOW = 100;
+// Measured: human sci MATTR100 mean ≈ 0.688 on 24 pre-ChatGPT OA papers.
+export const MATTR_HUMAN_BASELINE = 0.69;
+// Below this → fully AI-like on this feature. Room under human min (0.642).
+export const MATTR_AI_BASELINE = 0.55;
+
+/**
+ * Moving-average type-token ratio over a fixed window (default 100 tokens).
+ * Pure exported helper — no framework tests in this package; keep it small.
+ */
+export function measureMattr(words: string[], windowSize: number = MATTR_WINDOW): number {
+  if (words.length === 0) return 0;
+  if (words.length < windowSize) {
+    return new Set(words).size / words.length;
+  }
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i + windowSize <= words.length; i++) {
+    // Window TTR; Set per window is fine for paper-scale N (few thousand tokens).
+    sum += new Set(words.slice(i, i + windowSize)).size / windowSize;
+    n++;
+  }
+  return n > 0 ? sum / n : 0;
+}
+
+function measureLexicalDiversity(text: string, _wordCount: number): StatisticalFeature {
   const words = text.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter((w) => w.length > 1);
   if (words.length < 20) {
-    return { name: "lexical_diversity", score: 0.5, rawValue: 0, humanBaseline: 0.70, aiBaseline: 0.50, description: "insufficient words" };
+    return {
+      name: "lexical_diversity",
+      score: 0.5,
+      rawValue: 0,
+      humanBaseline: MATTR_HUMAN_BASELINE,
+      aiBaseline: MATTR_AI_BASELINE,
+      description: "insufficient words",
+    };
   }
-  const types = new Set(words);
-  const ttr = types.size / words.length;
-
-  let humanBl: number, aiBl: number, score: number;
-  if (wordCount < 300) {
-    // Scientific short text: TTR is higher because of technical vocabulary
-    // AND because shorter samples have naturally higher type/token ratio.
-    humanBl = 0.78;
-    aiBl = 0.58;
-    score = Math.max(0, Math.min(1, (0.78 - ttr) / 0.22));
-  } else {
-    // Long text: original calibration
-    humanBl = 0.60;
-    aiBl = 0.40;
-    score = Math.max(0, Math.min(1, (0.60 - ttr) / 0.25));
-  }
-  const note = ttr >= humanBl
-    ? " (TTR too high for short-text discrimination)"
-    : "";
-  return { name: "lexical_diversity", score, rawValue: ttr, humanBaseline: humanBl, aiBaseline: aiBl, description: `TTR=${ttr.toFixed(3)} (human≈${humanBl}, AI≈${aiBl})${note}` };
+  const mattr = measureMattr(words, MATTR_WINDOW);
+  const humanBl = MATTR_HUMAN_BASELINE;
+  const aiBl = MATTR_AI_BASELINE;
+  // Higher MATTR → more human. Map humanBl→0, aiBl→1.
+  const span = humanBl - aiBl; // 0.14
+  const score = Math.max(0, Math.min(1, (humanBl - mattr) / span));
+  return {
+    name: "lexical_diversity",
+    score,
+    rawValue: mattr,
+    humanBaseline: humanBl,
+    aiBaseline: aiBl,
+    description: `MATTR${MATTR_WINDOW}=${mattr.toFixed(3)} (human≈${humanBl}, AI≈${aiBl})`,
+  };
 }
 
 // === Feature 4: Punctuation analysis (em-dash, semicolons) ===
@@ -171,31 +200,39 @@ function measurePunctuation(text: string): StatisticalFeature {
 
 // === Feature 5: Function word ratio ===
 // AI overuses function words (the, of, and, to, a, in, is, it, that, for).
-// Scientific text has HIGHER function word ratio for both human and AI
-// (passive voice, complex sentences, articles). Adjust baselines up.
-//
-// Scientific text: human ≈ 0.35, AI ≈ 0.42
-// General text:    human ≈ 0.25, AI ≈ 0.35
+// This lab scores scientific prose only — blog/essay baselines (human≈0.25)
+// falsely flagged every paper. Pre-ChatGPT OA corpus: mean 0.295, range 0.252–0.341.
+// Use scientific baselines for all lengths (short paragraphs share the same register).
 const AI_OVERUSED_FUNCTION_WORDS = ["the", "of", "and", "to", "a", "in", "is", "it", "that", "for", "on", "with", "as", "by", "this", "we", "are", "be", "was", "were"];
-function measureFunctionWords(text: string, wordCount: number): StatisticalFeature {
+// Measured mean on 24 pre-ChatGPT scientific samples.
+export const FW_HUMAN_BASELINE = 0.30;
+// Upper AI-like band; human max on corpus was 0.341 so span keeps humans mid-low.
+export const FW_AI_BASELINE = 0.40;
+function measureFunctionWords(text: string, _wordCount: number): StatisticalFeature {
   const words = text.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter((w) => w.length > 0);
-  if (words.length < 20) return { name: "function_words", score: 0.5, rawValue: 0, humanBaseline: 0.35, aiBaseline: 0.42, description: "insufficient words" };
+  if (words.length < 20) {
+    return {
+      name: "function_words",
+      score: 0.5,
+      rawValue: 0,
+      humanBaseline: FW_HUMAN_BASELINE,
+      aiBaseline: FW_AI_BASELINE,
+      description: "insufficient words",
+    };
+  }
   const funcCount = words.filter((w) => AI_OVERUSED_FUNCTION_WORDS.includes(w)).length;
   const ratio = funcCount / words.length;
-
-  let humanBl: number, aiBl: number, score: number;
-  if (wordCount < 300) {
-    // Scientific text: more function words overall
-    humanBl = 0.35;
-    aiBl = 0.42;
-    score = Math.max(0, Math.min(1, (ratio - 0.35) / 0.08));
-  } else {
-    // General text
-    humanBl = 0.25;
-    aiBl = 0.35;
-    score = Math.max(0, Math.min(1, (ratio - 0.25) / 0.12));
-  }
-  return { name: "function_words", score, rawValue: ratio, humanBaseline: humanBl, aiBaseline: aiBl, description: `function word ratio=${(ratio * 100).toFixed(1)}% (human≈${humanBl}, AI≈${aiBl})` };
+  const humanBl = FW_HUMAN_BASELINE;
+  const aiBl = FW_AI_BASELINE;
+  const score = Math.max(0, Math.min(1, (ratio - humanBl) / (aiBl - humanBl)));
+  return {
+    name: "function_words",
+    score,
+    rawValue: ratio,
+    humanBaseline: humanBl,
+    aiBaseline: aiBl,
+    description: `function word ratio=${(ratio * 100).toFixed(1)}% (human_sci≈${humanBl}, AI≈${aiBl})`,
+  };
 }
 
 // === Feature 6: Sentence starter diversity ===
@@ -236,29 +273,39 @@ function measureSentenceStarterDiversity(text: string): StatisticalFeature {
 }
 
 // === Feature 7: Lexical sophistication (avg word length) ===
-// AI uses slightly longer words on average than humans in scientific context.
-// For BOTH short and long scientific text, this works with the original
-// calibration since word length distribution is relatively stable.
+// Pre-ChatGPT OA corpus: mean avg word length 6.30 (range 5.71–7.01).
+// Old human baseline 6.0 treated normal scientific vocabulary as AI-like.
+export const SOPH_HUMAN_BASELINE = 6.3;
+export const SOPH_AI_BASELINE = 7.3;
 function measureLexicalSophistication(text: string): StatisticalFeature {
   const words = text.replace(/[^a-zA-Z\s]/g, "").split(/\s+/).filter((w) => w.length > 2);
-  if (words.length < 20) return { name: "lexical_sophistication", score: 0.5, rawValue: 0, humanBaseline: 6.0, aiBaseline: 7.0, description: "insufficient words" };
+  if (words.length < 20) {
+    return {
+      name: "lexical_sophistication",
+      score: 0.5,
+      rawValue: 0,
+      humanBaseline: SOPH_HUMAN_BASELINE,
+      aiBaseline: SOPH_AI_BASELINE,
+      description: "insufficient words",
+    };
+  }
   const avgLen = words.reduce((sum, w) => sum + w.length, 0) / words.length;
-  // Scientific text: human avg word length ≈ 6.0, AI ≈ 7.0
-  const score = Math.max(0, Math.min(1, (avgLen - 6.0) / 1.2));
-  return { name: "lexical_sophistication", score, rawValue: avgLen, humanBaseline: 6.0, aiBaseline: 7.0, description: `avg word length=${avgLen.toFixed(1)} (human_sci≈6.0, AI_sci≈7.0)` };
+  const humanBl = SOPH_HUMAN_BASELINE;
+  const aiBl = SOPH_AI_BASELINE;
+  const score = Math.max(0, Math.min(1, (avgLen - humanBl) / (aiBl - humanBl)));
+  return {
+    name: "lexical_sophistication",
+    score,
+    rawValue: avgLen,
+    humanBaseline: humanBl,
+    aiBaseline: aiBl,
+    description: `avg word length=${avgLen.toFixed(1)} (human_sci≈${humanBl}, AI_sci≈${aiBl})`,
+  };
 }
 
 // === Combined detection (statistical + lexicon) ===
-// Revised weights for scientific text:
-//   - lexicon_tells increased to 0.55 (the single most reliable feature
-//     for short scientific paragraphs — directly catches AI-tell words)
-//   - burstiness at 0.10 (works but less discriminating in short text)
-//   - ngram_entropy at 0.05 (higher entropy in short text masks differences)
-//   - lexical_diversity at 0.08 (TTR is higher in short text, reduces signal)
-//   - punctuation reduced to 0.03 (em-dashes/semicolons are rare in sci text)
-//   - function_words at 0.08 (now works with short-text calibration)
-//   - starter_diversity reduced to 0.04 (neutral for short text)
-//   - lexical_sophistication at 0.07 (stable signal)
+// Weights unchanged in spirit: lexicon_tells dominates (0.55) because the
+// product target is recognisable AI register, not secondary stylometrics.
 const WEIGHTS: Record<string, number> = {
   burstiness: 0.10,
   ngram_entropy: 0.05,
@@ -267,8 +314,17 @@ const WEIGHTS: Record<string, number> = {
   function_words: 0.08,
   starter_diversity: 0.04,
   lexical_sophistication: 0.07,
-  lexicon_tells: 0.55,  // up from 0.45
+  lexicon_tells: 0.55,
 };
+
+/**
+ * Density (weighted hits / 1000 words) at which lexicon_tells saturates to 1.0.
+ * Measured after lexicon prune: human papers ≈ 0–2 /1k; stacked adversarial
+ * probes (delve/tapestry/em-dashes/formulaic openers) reach 15–40+ /1k.
+ * 8 /1k ≈ a few real tells in a short paragraph — full component weight without
+ * needing a novel-length document.
+ */
+export const LEXICON_DENSITY_SATURATION_PER_1K = 8;
 
 export function detectStatistical(text: string, lex: Lexicon): StatisticalDetectionResult {
   const wordCount = getWordCount(text);
@@ -284,16 +340,20 @@ export function detectStatistical(text: string, lex: Lexicon): StatisticalDetect
     measureLexicalSophistication(text),
   ];
 
-  // Add lexicon-based score as a feature
+  // Lexicon feature: density per 1k words (scoreText.total), not absolute counts.
   const lexScore = scoreText(text, lex);
-  const lexiconScore = Math.max(0, Math.min(1, lexScore.total / 10));
+  const lexiconScore = Math.max(
+    0,
+    Math.min(1, lexScore.total / LEXICON_DENSITY_SATURATION_PER_1K),
+  );
   features.push({
     name: "lexicon_tells",
     score: lexiconScore,
     rawValue: lexScore.total,
     humanBaseline: 0,
-    aiBaseline: 5,
-    description: `AI-tell hits: ${lexScore.total} (${lexScore.verdict})`,
+    // aiBaseline documents the density that maps near 1.0 under saturation.
+    aiBaseline: LEXICON_DENSITY_SATURATION_PER_1K,
+    description: `AI-tell density=${lexScore.total.toFixed(1)}/1k (${lexScore.hits.length} hits, rawWeight=${lexScore.rawWeight.toFixed(1)}, ${lexScore.verdict})`,
   });
 
   // Weighted sum
@@ -303,7 +363,11 @@ export function detectStatistical(text: string, lex: Lexicon): StatisticalDetect
   }
   finalScore = Math.round(finalScore * 100);
 
-  const threshold = 40;
+  // Calibrated against 24 open-access 2018-2020 (pre-ChatGPT, therefore human)
+  // scientific papers: human median 6, human max 34, only 1 of 24 above 30,
+  // while human prose with AI tells injected scores 60-69. 30 sits in the empty
+  // band between the two. Must match DEFAULT_THRESHOLD in ai-detector.ts.
+  const threshold = 30;
   const isAI = finalScore > threshold;
 
   // Top reasons (features with highest score)

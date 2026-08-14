@@ -24,10 +24,12 @@ fasting conditions (p<0.01, n=6 per group). These results suggest that CRTC1 ser
 sensor in the mammalian hypothalamus, integrating peripheral nutritional signals with transcriptional 
 regulation of appetite-related neuropeptides.`;
 
-const SHORT_TEXT_WITH_FILLERS = `Cachexia is notably a complex condition that essentially affects 
-millions of people worldwide. Intricately linked to several chronic diseases, this multifaceted 
-disorder plays a crucial role in patient outcomes. Importantly, it involves an intricate network 
-of molecular pathways that are fundamentally driven by inflammatory cytokines.`;
+// Uses lexicon tells that survived the 2026-08 corpus audit (not ordinary
+// academic adverbs like notably/essentially, which false-positive on human science).
+const SHORT_TEXT_WITH_FILLERS = `Cachexia is a complex condition that delves into mechanisms 
+affecting millions of people worldwide. This multifaceted disorder plays a crucial role in
+patient outcomes. It involves an intricate network of molecular pathways and a rich tapestry
+of inflammatory cytokines that leverage cutting-edge models.`;
 
 test("detectStatistical: short scientific paragraph activates in short-text mode", () => {
   const result = detectStatistical(SHORT_SCI_PARAGRAPH, lex);
@@ -48,7 +50,8 @@ test("detectStatistical: short scientific paragraph does NOT produce false-posit
 test("detectStatistical: AI-tell-laden short text scores higher than clean text", () => {
   const clean = detectStatistical(SHORT_SCI_PARAGRAPH, lex);
   const withTells = detectStatistical(SHORT_TEXT_WITH_FILLERS, lex);
-  // Text with "crucially", "notably", "intricacies" etc should score higher AI than clean text.
+  // Text with surviving AI-tells (delve/multifaceted/tapestry/leverage/plays a crucial role)
+  // should score higher AI than clean text.
   assert.ok(withTells.finalScore > clean.finalScore,
     `text with AI tells (${withTells.finalScore}%) should score > clean text (${clean.finalScore}%)`);
 });

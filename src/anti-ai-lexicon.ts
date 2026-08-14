@@ -109,6 +109,8 @@ export interface Lexicon {
       sentenceLengthUniformity: number;
     };
     thresholds: { safeMax: number; cautionMax: number };
+    /** Em-dashes per 1000 words above which overuse weight fires. */
+    emdashDensityMaxPer1k: number;
   };
 }
 
@@ -443,6 +445,8 @@ export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
         sentenceLengthUniformity: Number(data.ai_tell_scoring?.weights?.sentence_length_uniformity ?? 1.0),
       },
       thresholds: {
+        // Density units: weighted hits per 1000 words (see scoreText). Defaults
+        // from pre-ChatGPT corpus after lexicon prune: human band ≈ 0–2 /1k.
         safeMax: (() => {
           const v = data.ai_tell_scoring?.thresholds?.safe_max ?? data.ai_tell_scoring?.thresholds?.safe;
           const n = typeof v === "number" ? v : Number(v);
@@ -454,6 +458,13 @@ export function loadLexicon(rootDir: string, domainKey?: string): Lexicon {
           return Number.isFinite(n) ? n : 5;
         })(),
       },
+      // Em-dash overuse gate on a density basis. Human sci corpus: ≈0 /1k;
+      // 2.0 /1k is above every pre-ChatGPT sample while still catching stacked LLM dashes.
+      emdashDensityMaxPer1k: (() => {
+        const v = data.ai_tell_scoring?.emdash_density_max_per_1k;
+        const n = typeof v === "number" ? v : Number(v);
+        return Number.isFinite(n) ? n : 2.0;
+      })(),
     },
   };
 }
@@ -467,16 +478,42 @@ export interface ScoreDetail {
 }
 
 export interface ScoreResult {
+  /**
+   * Weighted AI-tell density per 1000 words (scoring quantity).
+   * Absolute hit counts grow with document length and are not comparable to
+   * paragraph-scale thresholds; density is. Hit list remains absolute for feedback.
+   */
   total: number;
+  /** Absolute sum of hit weights before length normalisation. */
+  rawWeight: number;
+  /** Word count used for density (tokens with length > 1). */
+  wordCount: number;
   hits: ScoreDetail[];
   verdict: "human-like" | "edit-recommended" | "rewrite-mandatory";
 }
 
 const escapeForRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Count words the same way as the statistical detector (len > 1). */
+export function countScoreWords(text: string): number {
+  return text.split(/\s+/).filter((w) => w.length > 1).length;
+}
+
+/**
+ * Density = (raw weighted hits / words) * 1000.
+ * Measured justification: a 3191-word 2019 human paper scored rawWeight=42 under
+ * the old absolute scheme and saturated the 0.55 lexicon component; per-1k density
+ * on the pruned lexicon is ~0 for that paper.
+ */
+export function densityPer1k(rawWeight: number, wordCount: number): number {
+  if (wordCount <= 0) return rawWeight > 0 ? Infinity : 0;
+  return (rawWeight / wordCount) * 1000;
+}
+
 export function scoreText(text: string, lex: Lexicon): ScoreResult {
   const hits: ScoreDetail[] = [];
   const lower = text.toLowerCase();
+  const wordCount = countScoreWords(text);
 
   const W = lex.scoring.weights;
 
@@ -501,30 +538,41 @@ export function scoreText(text: string, lex: Lexicon): ScoreResult {
     const m = lower.match(re);
     if (m) for (const _ of m) hits.push({ hit: a, category: "filler", weight: W.fillerAdverbHit });
   }
-  // phrase openers (substring because they include commas)
+  // phrase openers (substring because multi-word openers include commas/apostrophes)
   for (const p of lex.phraseOpeners) {
     if (!p) continue;
     if (lower.includes(p.toLowerCase())) {
       hits.push({ hit: p, category: "opener", weight: W.aiOpenerHit });
     }
   }
-  // em-dash overuse
+  // Em-dash overuse on a density basis (calibrated 2026-08). Supersedes the
+  // interim hostile-audit #11 length-scaled absolute threshold (max(4, words/200)):
+  // both aim to stop whole-document absolute counts from flagging long human
+  // prose; density (em/1k > emdashDensityMaxPer1k, weight scaled by overage)
+  // is the corpus-calibrated form. Human sci ≈ 0/1k; AI probes with stacked
+  // dashes exceed 10/1k.
   const emdashes = (text.match(/—/g) ?? []).length;
-  if (emdashes > 2) {
+  const emPer1k = wordCount > 0 ? (emdashes / wordCount) * 1000 : emdashes > 0 ? Infinity : 0;
+  const emMax = lex.scoring.emdashDensityMaxPer1k;
+  if (emdashes > 0 && emPer1k > emMax) {
+    // Scale weight by how far over the density gate we are, capped at 3× base.
+    const overFactor = Math.min(3, emPer1k / emMax);
     hits.push({
-      hit: `em-dash x ${emdashes}`,
+      hit: `em-dash ${emdashes} (${emPer1k.toFixed(1)}/1k words)`,
       category: "emdash",
-      weight: W.emdashOveruseThreshold,
+      weight: W.emdashOveruseThreshold * overFactor,
     });
   }
 
-  const total = hits.reduce((acc, h) => acc + h.weight, 0);
+  const rawWeight = hits.reduce((acc, h) => acc + h.weight, 0);
+  // total is density (per 1000 words) — thresholds and statistical saturation use this scale.
+  const total = densityPer1k(rawWeight, wordCount);
   let verdict: ScoreResult["verdict"];
   if (total === 0 || total < lex.scoring.thresholds.safeMax) verdict = "human-like";
   else if (total <= lex.scoring.thresholds.cautionMax) verdict = "edit-recommended";
   else verdict = "rewrite-mandatory";
 
-  return { total, hits, verdict };
+  return { total, rawWeight, wordCount, hits, verdict };
 }
 
 // === Silent rewrite ===
@@ -603,7 +651,75 @@ export interface SilentRewriteStats {
   flaggedVerbs: string[];
 }
 
+// === Prose-vs-code gate (hostile-audit fix #2/#5/#6) ===
+//
+// silentRewrite runs on EVERY assistant message via the message_end hook.
+// Its capitalisation regex treats `\n[ \t]+` (an indented code block) and
+// `x. y` (a dotted identifier) as sentence boundaries, corrupting code:
+//   "    const notably = 1;" → "Const = 1;"
+// This guard returns true for anything that is NOT plain prose, so the
+// rewriter no-ops on code/JSON/data and leaves it byte-identical.
+// Exported for testing.
+export function looksLikeCodeOrNonProse(text: string): boolean {
+  if (typeof text !== "string" || text.length === 0) return true;
+  // Fenced code blocks.
+  if (/```/.test(text)) return true;
+  // Indented code blocks (a line starting with 4+ spaces or a tab).
+  if (/^(?:    |\t)/m.test(text)) return true;
+  // BUG 7 fix: inline code (a backtick pair with content). silentRewrite would
+  // delete filler words / avoided verbs from inside `const notably = 1`,
+  // corrupting the code. Conservative: any inline code → skip the rewrite.
+  if (/`[^`\n]+`/.test(text)) return true;
+  // BUG 7 fix: markdown table rows (a line delimited by leading/trailing |).
+  // Filler words inside table cells were being deleted (| notably | → | |).
+  if (/^\s*\|.*\|\s*$/m.test(text)) return true;
+  // JSON / data-structure-looking blobs: starts with { or [ and is
+  // symbol-heavy relative to letters.
+  const t = text.trim();
+  if (/^[{[]/.test(t)) {
+    const letters = (t.match(/[a-zA-Z]/g) ?? []).length;
+    const symbols = (t.match(/[:;{}[\],()]/g) ?? []).length;
+    if (symbols > letters) return true;
+  }
+  return false;
+}
+
+// === Safe regular-verb past-tense conjugation (hostile-audit fix #3) ===
+//
+// The previous blind rule `(set out to|set about)\s+(\w+)` conjugated the
+// NEXT word assuming it was a verb, producing garbage on non-verbs:
+//   "We set out to the laboratory." → "We thed laboratory."
+//   "We aim to 5 replicates."      → "We 5ed replicates."
+//   "They set out to go home."     → "They goed home."  (irregular!)
+// Now we only conjugate words in an allowlist of regular research verbs,
+// and handle the consonant+y → ied case so "study/quantify/identify" work.
+const CONJUGATE_VERBS = new Set([
+  "investigate", "examine", "analyze", "characterize", "determine",
+  "measure", "test", "assess", "evaluate", "compare", "isolate", "image",
+  "segment", "score", "dissect", "map", "profile", "screen", "validate",
+  "confirm", "establish", "explore", "define", "generate", "obtain",
+  "collect", "record", "monitor", "track", "follow", "sequence", "clone",
+  "express", "label", "stain", "fix", "section", "calculate", "compute",
+  "estimate", "model", "simulate", "visualize", "illustrate", "demonstrate",
+  "show", "reveal", "uncover", "discover", "detect", "observe", "study",
+  "quantify", "identify", "classify", "specify", "purify", "assemble",
+]);
+
+function conjugateRegularPast(verb: string): string | null {
+  const v = verb.toLowerCase();
+  if (!CONJUGATE_VERBS.has(v)) return null;
+  if (/[^aeiou]y$/.test(v)) return v.slice(0, -1) + "ied"; // study→studied
+  if (v.endsWith("e")) return v + "d";                    // measure→measured
+  return v + "ed";                                         // test→tested
+}
+
 export function silentRewrite(text: string, lex: Lexicon): { text: string; stats: SilentRewriteStats } {
+  // Hostile-audit fix #2/#5: never rewrite code/JSON/data — the
+  // capitalisation + filler rules corrupt indented code blocks and dotted
+  // identifiers. Bail out byte-identical instead.
+  if (looksLikeCodeOrNonProse(text)) {
+    return { text, stats: { connectors: 0, fillers: 0, verbs: 0, flaggedVerbs: [] } };
+  }
   let out = text;
   const stats: SilentRewriteStats = {
     connectors: 0,
@@ -757,20 +873,24 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
     (_full, boundary, ws, ch) => `${boundary}${ws}${ch.toUpperCase()}`,
   );
 
-  // === Article agreement fix (N1 fix) ===
+  // === Article agreement fix (N1 fix; hostile-audit fix #7: skip acronyms) ===
   // After noun replacements ("intricate"→"detailed", "novel"→"", etc.) the
   // preceding article may now be wrong: "An detailed" → "A detailed",
   // "A intricate" → "An intricate". We rebuild the article by vowel test
-  // on the first letter of the following word.
+  // on the first letter of the following word. BUT the vowel-LETTER test
+  // is wrong for acronyms pronounced by letter ("a URL", "an MRI" have
+  // consonant sounds), so we leave all-caps acronyms untouched rather than
+  // over-correct them.
   out = out.replace(
-    /\b([Aa])(n?)\s+([a-zA-Z])/g,
-    (_full, a, n, firstLetter) => {
+    /\b([Aa])(n?)\s+([A-Za-z]+)/g,
+    (_full, a, n, word) => {
+      if (/^[A-Z]{2,6}$/.test(word)) return _full; // acronym — leave as-is
+      const firstLetter = word[0];
       const isVowel = /^[aeiouAEIOU]/.test(firstLetter);
       const needAn = isVowel;
       const hasAn = n.length > 0;
-      if (needAn === hasAn) return `${a}${n} ${firstLetter}`;
-      // Flip n. Keep the case of "A"/"a" as-is.
-      return `${a}${needAn ? "n" : ""} ${firstLetter}`;
+      if (needAn === hasAn) return `${a}${n} ${word}`;
+      return `${a}${needAn ? "n" : ""} ${word}`;
     },
   );
 
@@ -783,10 +903,15 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
     stats.connectors++;
     return "set out to";
   });
-  // "set out to <verb>" → past tense for v0.2 polish
+  // "set out to <verb>" → past tense for v0.2 polish.
+  // Hostile-audit fix #3: only conjugate words in CONJUGATE_VERBS so we never
+  // produce garbage like "We thed laboratory" / "They goed home". Unknown
+  // following words are left in place (the phrase stays grammatical).
   out = out.replace(/\b(set out to|set about)\s+(\w+)/gi, (_full, _prep, verb) => {
+    const past = conjugateRegularPast(verb);
+    if (past === null) return _full; // not a known regular verb — don't mangle
     stats.connectors++;
-    return verb.endsWith("e") ? `${verb}d` : `${verb}ed`;
+    return past;
   });
   // "may suggest" / "could indicate" — rewrite to observation language.
   // Use the "that"-preserving form first so the resulting sentence is grammatically
@@ -808,19 +933,26 @@ export function silentRewrite(text: string, lex: Lexicon): { text: string; stats
     },
   );
   // "Our findings suggest" → "We observed" inside Results only — we apply heuristic.
-  out = out.replace(/\b(our findings|the data)\s+suggest(s|ed)?\b/gi, (m) => {
+  // Hostile-audit fix #4: preserve sentence-start capitalisation (the
+  // capitalisation pass already ran above, so a lowercase "we" at the
+  // start of a sentence would never be re-capped).
+  out = out.replace(/\b(our findings|the data)\s+suggest(s|ed)?\b/gi, (match) => {
     stats.connectors++;
-    return "we observed";
+    const rep = "we observed";
+    return match[0] === match[0].toUpperCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
   });
-  // "These findings suggest" → keep but lower-tense claim
-  out = out.replace(/\bthese findings\s+(suggest|indicate|imply)\b/gi, (m, verb) => {
+  // "These findings suggest" → keep but lower-tense claim (preserve case).
+  out = out.replace(/\bthese findings\s+(suggest|indicate|imply)\b/gi, (match) => {
     stats.connectors++;
-    return `these findings are consistent with`;
+    const rep = "these findings are consistent with";
+    return match[0] === match[0].toUpperCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
   });
   // "We aim to investigate" → "We investigated" (Drosophila writing is direct).
+  // Hostile-audit fix #3: gated on the verb allowlist (same reason as above).
   out = out.replace(/\bwe aim to\s+(\w+)/gi, (_full, verb) => {
+    const past = conjugateRegularPast(verb);
+    if (past === null) return _full;
     stats.connectors++;
-    const past = verb.endsWith("e") ? `${verb}d` : `${verb}ed`;
     return `we ${past}`;
   });
   out = out.replace(/\bin this paper,?\s*we\b/gi, () => {
